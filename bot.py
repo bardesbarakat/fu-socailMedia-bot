@@ -1,146 +1,158 @@
 import os
-import re
 import time
 import requests
 from bs4 import BeautifulSoup
+import urllib3
+import io
+import base64
+from PIL import Image
 
-PAGE_ID = os.environ.get("PAGE_ID", "201624046515768")
-IG_USER_ID = os.environ.get("IG_USER_ID", "17841410383378089")
+# تجاهل تحذيرات شهادات SSL غير الموثقة من خادم الجامعة
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# جلب المتغيرات السرية من البيئة
 ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
+FB_PAGE_ID = os.environ.get("FB_PAGE_ID")
+IG_USER_ID = os.environ.get("IG_USER_ID")
+IMGBB_KEY = os.environ.get("IMGBB_API_KEY")
 
 HISTORY_FILE = "posted_news.txt"
 
-SOURCES = [
-    {"type": "أخبار", "url": "https://www.fayoum.edu.eg/ar/News?tab=news&pageNumber=1"},
-    {"type": "إعلانات", "url": "https://www.fayoum.edu.eg/ar/Announcements?pageNumber=1&pageSize=12"},
-    {"type": "فعاليات", "url": "https://www.fayoum.edu.eg/ar/News?tab=events&pageNumber=1"}
-]
-
-def load_posted():
+def get_posted_links():
     if not os.path.exists(HISTORY_FILE):
         return set()
     with open(HISTORY_FILE, "r", encoding="utf-8") as f:
         return set(line.strip() for line in f if line.strip())
 
-def save_posted(identifier):
+def save_posted_link(link):
     with open(HISTORY_FILE, "a", encoding="utf-8") as f:
-        f.write(identifier + "\n")
+        f.write(f"{link}\n")
 
-def get_target_links(source_url):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    }
-    found_links = []
+def adjust_and_upload_image(image_url):
+    """فحص أبعاد الصورة وضبطها لتناسب شروط إنستجرام ثم رفعها عبر ImgBB"""
     try:
-        res = requests.get(source_url, headers=headers, timeout=25, verify=False)
-        res.encoding = 'utf-8'
-        soup = BeautifulSoup(res.text, "html.parser")
+        resp = requests.get(image_url, timeout=20, verify=False)
+        img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+        w, h = img.size
+        ratio = w / h
 
-        for a in soup.find_all("a", href=True):
-            href = a['href'].strip()
-            if re.search(r'/(News/Details|Announcements/ADsDetails)/\d+', href, re.IGNORECASE):
-                full_url = href if href.startswith("http") else f"https://www.fayoum.edu.eg{href if href.startswith('/') else '/' + href}"
-                if full_url not in found_links:
-                    found_links.append(full_url)
+        # النسبة المقبولة في إنستجرام بين 0.8 (4:5) و 1.91 (1.91:1)
+        if 0.8 <= ratio <= 1.91:
+            return image_url
+
+        # جعل الصورة داخل مربع بخلفية بيضاء نقية دون قص تفاصيل الخبر
+        max_side = max(w, h)
+        new_img = Image.new("RGB", (max_side, max_side), (255, 255, 255))
+        offset = ((max_side - w) // 2, (max_side - h) // 2)
+        new_img.paste(img, offset)
+
+        buffer = io.BytesIO()
+        new_img.save(buffer, format="JPEG", quality=90)
+        img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+        if IMGBB_KEY:
+            up_res = requests.post(
+                "https://api.imgbb.com/1/upload",
+                data={"key": IMGBB_KEY, "image": img_b64},
+                timeout=25
+            ).json()
+            if up_res.get("success"):
+                return up_res["data"]["url"]
+
     except Exception as e:
-        print(f"خطأ: {e}")
-    return found_links
+        print(f"تنبيه أثناء فحص الصورة: {e}")
 
-def fetch_article_meta(url):
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
-    }
-    title = ""
-    image_url = None
-    try:
-        r = requests.get(url, headers=headers, timeout=20, verify=False)
-        r.encoding = 'utf-8'
-        soup = BeautifulSoup(r.text, "html.parser")
+    return image_url
 
-        if soup.title:
-            title = soup.title.get_text().replace("البوابة الرسمية لجامعة الفيوم", "").replace("|", "").strip()
-
-        og_image = soup.find("meta", property="og:image")
-        if og_image and og_image.get("content"):
-            image_url = og_image["content"]
-        else:
-            for img in soup.find_all("img"):
-                src = img.get("src", "")
-                if any(k in src.lower() for k in ["upload", "news", "ads", "events"]) and not src.startswith("data:image"):
-                    image_url = src if src.startswith("http") else f"https://www.fayoum.edu.eg{src if src.startswith('/') else '/' + src}"
-                    break
-    except Exception as e:
-        print(f"خطأ أثناء جلب المقال: {e}")
-
-    return title, image_url
-
-def post_to_facebook(link):
-    url = f"https://graph.facebook.com/v19.0/{PAGE_ID}/feed"
+def post_to_facebook(message, link):
+    url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/feed"
     payload = {
+        "message": message,
         "link": link,
         "access_token": ACCESS_TOKEN
     }
-    res = requests.post(url, data=payload)
-    return res.json()
+    return requests.post(url, data=payload).json()
 
 def post_to_instagram(image_url, caption):
-    if not image_url:
-        print("تخطي إنستجرام: المقال لا يحتوي على صورة.")
+    if not image_url or not IG_USER_ID:
         return None
+
+    # ضبط الصورة إن كانت غير متطابقة مع أبعاد إنستجرام
+    final_image_url = adjust_and_upload_image(image_url)
 
     container_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media"
     container_payload = {
-        "image_url": image_url,
+        "image_url": final_image_url,
         "caption": caption,
         "access_token": ACCESS_TOKEN
     }
     c_res = requests.post(container_url, data=container_payload).json()
     creation_id = c_res.get("id")
-
     if not creation_id:
-        print("خطأ حاوية إنستجرام:", c_res)
+        print(f"خطأ حاوية إنستجرام: {c_res}")
         return c_res
 
     time.sleep(5)
-
     publish_url = f"https://graph.facebook.com/v19.0/{IG_USER_ID}/media_publish"
-    publish_payload = {
-        "creation_id": creation_id,
-        "access_token": ACCESS_TOKEN
-    }
-    return requests.post(publish_url, data=publish_payload).json()
+    return requests.post(publish_url, data={"creation_id": creation_id, "access_token": ACCESS_TOKEN}).json()
 
-def run_agent():
+def fetch_and_publish():
     print("--- فحص المحتوى ونشره ---")
-    posted = load_posted()
+    posted_links = get_posted_links()
+    url = "https://www.fayoum.edu.eg/ar/News/AllNews"
 
-    for src in SOURCES:
-        section_type = src["type"]
-        links = get_target_links(src["url"])
+    try:
+        r = requests.get(url, verify=False, timeout=20)
+        soup = BeautifulSoup(r.text, "html.parser")
+        news_items = soup.find_all("div", class_="news-item") or soup.find_all("article") or soup.find_all("a", href=lambda h: h and "/News/Details/" in h)
 
-        for link in links:
-            if link not in posted:
-                print(f"رصد عنصر جديد من [{section_type}]: {link}")
+        for item in news_items:
+            link = item.get("href") if item.name == "a" else (item.find("a")["href"] if item.find("a") else None)
+            if not link:
+                continue
 
-                # نشر على فيسبوك بنظام Link Preview
-                fb_res = post_to_facebook(link)
-                print("استجابة فيسبوك:", fb_res)
+            if not link.startswith("http"):
+                link = f"https://www.fayoum.edu.eg{link}"
 
-                # نشر الأخبار والفعاليات فقط على إنستجرام
-                if section_type in ["أخبار", "فعاليات"]:
-                    title, img_url = fetch_article_meta(link)
-                    ig_caption = f"📢 {title}\n\n🔗 لمزيد من التفاصيل يرجى زيارة موقع جامعة الفيوم عبر الرابط:\n{link}\n\n#جامعة_الفيوم #{section_type}"
-                    ig_res = post_to_instagram(img_url, ig_caption)
-                    print("استجابة إنستجرام:", ig_res)
+            if link in posted_links:
+                continue
 
-                if "id" in fb_res:
-                    save_posted(link)
-                    print("تم التوثيق بنجاح.")
-                    return
+            print(f"رصد عنصر جديد: {link}")
 
-    print("لا توجد عناصر جديدة.")
+            # استخراج تفاصيل صفحة الخبر
+            det_res = requests.get(link, verify=False, timeout=20)
+            det_soup = BeautifulSoup(det_res.text, "html.parser")
+
+            title_elem = det_soup.find("h1") or det_soup.find("h2") or det_soup.find("title")
+            title = title_elem.get_text(strip=True) if title_elem else "خبر جديد من جامعة الفيوم"
+
+            img_elem = det_soup.find("img", src=lambda s: s and ("News" in s or "Upload" in s or "images" in s))
+            img_url = ""
+            if img_elem and img_elem.get("src"):
+                src = img_elem["src"]
+                img_url = src if src.startswith("http") else f"https://www.fayoum.edu.eg{src}"
+
+            message = f"{title}\n\nالتفاصيل كاملة عبر الرابط:\n{link}"
+
+            # 1. النشر على فيسبوك
+            fb_res = post_to_facebook(message, link)
+            print(f"استجابة فيسبوك: {fb_res}")
+
+            # 2. النشر على إنستجرام (في حال وجود صورة)
+            if img_url:
+                ig_res = post_to_instagram(img_url, message)
+                print(f"استجابة إنستجرام: {ig_res}")
+
+            # التوثيق عند نجاح النشر على فيسبوك
+            if "id" in fb_res:
+                save_posted_link(link)
+                print("تم التوثيق بنجاح.")
+                return
+
+        print("لا توجد عناصر جديدة لنشرها حالياً.")
+
+    except Exception as e:
+        print(f"حدث خطأ أثناء فحص الموقع: {e}")
 
 if __name__ == "__main__":
-    import urllib3
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-    run_agent()
+    fetch_and_publish()
