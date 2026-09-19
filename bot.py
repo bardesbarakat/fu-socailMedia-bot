@@ -12,10 +12,8 @@ from requests.adapters import HTTPAdapter
 import urllib3
 from urllib3.util.retry import Retry
 
-# تعطيل تحذيرات شهادات SSL لموقع الجامعة
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# المتغيرات السرية وبيئة التشغيل
 ACCESS_TOKEN = os.environ.get("PAGE_ACCESS_TOKEN")
 FB_PAGE_ID = os.environ.get("FB_PAGE_ID")
 IG_USER_ID = os.environ.get("IG_USER_ID")
@@ -32,7 +30,6 @@ HEADERS = {
     )
 }
 
-# إعداد جلسة اتصالات تتحمل بطء السيرفر وتكرر المحاولات عند الانقطاع
 session = requests.Session()
 retries = Retry(
     total=3,
@@ -57,7 +54,7 @@ def save_posted_link(file_path, link):
 
 
 def is_today_item(page_soup):
-  """التحقق الدقيق من أن الخبر نُشر بتاريخ اليوم بتوقيت جمهورية مصر العربية."""
+  """Guyyaa har'aa ta'uu isaa sa'aatii Gibxii (Africa/Cairo) fayyadamuun mirkaneessuu."""
   try:
     cairo_tz = zoneinfo.ZoneInfo("Africa/Cairo")
     now = datetime.now(cairo_tz)
@@ -70,7 +67,6 @@ def is_today_item(page_soup):
   month_pad = f"{now.month:02d}"
   year = str(now.year)
 
-  # أنماط الأرقام للتاريخ
   date_patterns = [
       f"{day_pad}/{month_pad}/{year}",
       f"{day}/{month}/{year}",
@@ -82,7 +78,6 @@ def is_today_item(page_soup):
       f"{year}-{month}-{day}",
   ]
 
-  # أسماء الشهور العربية
   arabic_months = [
       "",
       "يناير",
@@ -99,41 +94,20 @@ def is_today_item(page_soup):
       "ديسمبر",
   ]
   month_name = arabic_months[now.month]
-
   text = page_soup.get_text()
 
-  # 1. مطابقة الأنماط الرقمية
   for dp in date_patterns:
     if dp in text:
       return True
 
-  # 2. مطابقة التاريخ بالاسم العربي (مثال: 19 سبتمبر 2026)
   if (day in text or day_pad in text) and (month_name in text) and (year in text):
     return True
-
-  # 3. البحث في وسوم meta المخصصة للتواريخ
-  for meta_name in [
-      "article:published_time",
-      "date",
-      "publication_date",
-      "DC.date.issued",
-  ]:
-    meta = page_soup.find("meta", attrs={"name": meta_name}) or page_soup.find(
-        "meta", attrs={"property": meta_name}
-    )
-    if meta and meta.get("content"):
-      m_content = meta["content"]
-      if (
-          f"{year}-{month_pad}-{day_pad}" in m_content
-          or f"{year}/{month_pad}/{day_pad}" in m_content
-      ):
-        return True
 
   return False
 
 
 def extract_real_article_image(soup):
-  """استخراج الصورة الأصلية المرفقة داخل محتوى الخبر وتجاهل الأيقونات واللوجو."""
+  """Suuraa dhugaa kan oduu qofa baasuu (loogoo fi asxaa dhiisuun)."""
   bad_keywords = [
       "logo",
       "icon",
@@ -150,14 +124,12 @@ def extract_real_article_image(soup):
       "default",
   ]
 
-  # 1. فحص وسم Open Graph
   og_image = soup.find("meta", property="og:image")
   if og_image and og_image.get("content"):
     c = og_image["content"].strip()
     if c.startswith("http") and not any(bad in c.lower() for bad in bad_keywords):
       return c
 
-  # 2. حصر البحث داخل جسم المقال فقط
   body = (
       soup.find(
           "div", class_=re.compile(r"details|content|article|news-body", re.I)
@@ -182,7 +154,6 @@ def extract_real_article_image(soup):
     ):
       candidates.append(full_url)
 
-  # فحص المقاسات الفعلية للصورة
   for u in candidates:
     try:
       resp = session.get(u, headers=HEADERS, timeout=15, verify=False)
@@ -197,8 +168,37 @@ def extract_real_article_image(soup):
   return candidates[0] if candidates else ""
 
 
+def extract_article_details(soup):
+  """Ibsa fi qabiyyee guutuu oduichaa baasuu."""
+  body = (
+      soup.find(
+          "div", class_=re.compile(r"details|content|article|news-body", re.I)
+      )
+      or soup.find("article")
+      or soup.find("main")
+  )
+
+  if not body:
+    return ""
+
+  paragraphs = body.find_all(["p", "span"])
+  valid_text = []
+
+  for p in paragraphs:
+    txt = p.get_text(strip=True)
+    if (
+        len(txt) > 30
+        and not any(x in txt for x in ["تاريخ النشر", "المصدر", "جميع الحقوق"])
+        and txt not in valid_text
+    ):
+      valid_text.append(txt)
+
+  full_details = "\n\n".join(valid_text[:4])
+  return full_details
+
+
 def adjust_and_upload_image(image_url):
-  """فحص أبعاد الصورة وضبطها لتوافق شروط إنستجرام وتوسيطها في إطار أبيض ورفعها عبر ImgBB."""
+  """Hammamtaa suuraa Instagram tiif tolchuu fi ImgBB irratti ol-fe'uu."""
   try:
     resp = session.get(image_url, headers=HEADERS, timeout=25, verify=False)
     if resp.status_code != 200:
@@ -228,24 +228,35 @@ def adjust_and_upload_image(image_url):
       ).json()
       if up_res.get("success"):
         hosted = up_res["data"]["url"]
-        print(f"تم رفع صورة الخبر المعدلة بنجاح: {hosted}")
         return hosted
-      else:
-        print(f"تنبيه ImgBB: {up_res}")
   except Exception as e:
-    print(f"خطأ أثناء معالجة الصورة: {e}")
+    print(f"Dogoggora suuraa qindeessuu: {e}")
 
   return image_url
 
 
-def post_to_facebook(message, link):
-  url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/feed"
+def post_to_facebook(message, link, image_url=None):
+  """Facebook irratti karaa /photos ykn /feed maxxansuu."""
   full_message = f"{message}\n\n{link}" if link not in message else message
+
+  if image_url:
+    url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/photos"
+    payload = {
+        "url": image_url,
+        "caption": full_message,
+        "access_token": ACCESS_TOKEN,
+    }
+    res = session.post(url, data=payload, timeout=25).json()
+    if "id" in res:
+      return res
+
+  url = f"https://graph.facebook.com/v19.0/{FB_PAGE_ID}/feed"
   payload = {"message": full_message, "access_token": ACCESS_TOKEN}
   return session.post(url, data=payload, timeout=25).json()
 
 
 def post_to_instagram(image_url, caption):
+  """Instagram irratti maxxansuu."""
   if not image_url or not IG_USER_ID:
     return None
 
@@ -260,7 +271,7 @@ def post_to_instagram(image_url, caption):
   c_res = session.post(container_url, data=c_payload, timeout=25).json()
   creation_id = c_res.get("id")
   if not creation_id:
-    print(f"خطأ حاوية إنستجرام: {c_res}")
+    print(f"Dogoggora qophii Instagram: {c_res}")
     return c_res
 
   time.sleep(5)
@@ -298,15 +309,15 @@ def fetch_all_items():
           if clean not in found_links:
             found_links.append(clean)
     except Exception as e:
-      print(f"تنبيه أثناء فحص المصدر {src}: {e}")
+      print(f"Akeekkachiisa: {src} sakatta'uu hin dandeenye: {e}")
 
   return found_links
 
 
 def run():
-  print(f"--- بدء دورة الفحص اليومي (المنصة المستهدفة: {TARGET_PLATFORM}) ---")
+  print(f"--- Sakatta'iinsi eegalameera ({TARGET_PLATFORM}) ---")
   all_links = fetch_all_items()
-  print(f"إجمالي الروابط المرصودة من كافة الأقسام: {len(all_links)}")
+  print(f"Waliigala hidhaawwan argaman: {len(all_links)}")
 
   fb_posted = get_posted_links(FB_HISTORY_FILE)
   ig_posted = get_posted_links(IG_HISTORY_FILE)
@@ -326,12 +337,11 @@ def run():
       det_res = session.get(link, headers=HEADERS, verify=False, timeout=35)
       det_soup = BeautifulSoup(det_res.text, "html.parser")
 
-      # التحقق من أن الخبر صادر اليوم فقط
       if not is_today_item(det_soup):
-        print(f"تخطي الرابط {link}: ليس بتاريخ اليوم.")
+        print(f"Kan har'aa miti, darbeera: {link}")
         continue
 
-      print(f"\n--- رصد عنصر بتاريخ اليوم وجاري نشره: {link} ---")
+      print(f"\n--- Oduu har'aa maxxansuu: {link} ---")
 
       title_el = (
           det_soup.find("h1")
@@ -344,34 +354,45 @@ def run():
           else "تحديث جديد من جامعة الفيوم"
       )
 
-      # استخراج الصورة الأصلية للخبر
+      # Ibsa qabiyyee oduichaa guutummaatti baasuu
+      details_body = extract_article_details(det_soup)
+
+      # Barreeffama Instagram qopheessuu (Mata-duree + Ibsa guutuu)
+      if details_body:
+        ig_cap = f"{title}\n\n{details_body}\n\n#جامعة_الفيوم #أخبار_الجامعة"
+      else:
+        ig_cap = f"{title}\n\n#جامعة_الفيوم #أخبار_الجامعة"
+
+      # Daangaa dheerina barreeffama Instagram eeguuf
+      if len(ig_cap) > 2100:
+        ig_cap = ig_cap[:2050] + "...\n\n#جامعة_الفيوم"
+
       img_url = extract_real_article_image(det_soup)
 
-      # 1. النشر على فيسبوك
+      # 1. Facebook irratti maxxansuu
       if need_fb:
-        fb_msg = f"{title}\n\nالتفاصيل كاملة عبر الرابط:\n{link}"
-        fb_res = post_to_facebook(fb_msg, link)
-        print(f"استجابة فيسبوك: {fb_res}")
+        fb_msg = (
+            f"{title}\n\n{details_body}\n\nالتفاصيل كاملة عبر الرابط:\n{link}"
+        )
+        fb_res = post_to_facebook(fb_msg, link, image_url=img_url)
+        print(f"Deebii Facebook: {fb_res}")
         if fb_res and "id" in fb_res:
           save_posted_link(FB_HISTORY_FILE, link)
-          print(f"تم توثيق الرابط على فيسبوك بنجاح: {link}")
 
-      # 2. النشر على إنستجرام
+      # 2. Instagram irratti maxxansuu
       if need_ig:
         if img_url:
-          ig_cap = f"{title}\n.\n.\n#جامعة_الفيوم #أخبار_الجامعة"
           ig_res = post_to_instagram(img_url, ig_cap)
-          print(f"استجابة إنستجرام: {ig_res}")
+          print(f"Deebii Instagram: {ig_res}")
           if ig_res and "id" in ig_res:
             save_posted_link(IG_HISTORY_FILE, link)
-            print(f"تم توثيق الرابط على إنستجرام بنجاح: {link}")
         else:
-          print("لا توجد صورة خبرية صالحة؛ تم تخطي إنستجرام لهذا الخبر.")
+          print("Suuraan qabatamaan hin argamne; Instagram darbeera.")
 
       time.sleep(12)
 
     except Exception as e:
-      print(f"خطأ أثناء معالجة الرابط {link}: {e}")
+      print(f"Dogoggora yeroo maxxansaa {link}: {e}")
 
 
 if __name__ == "__main__":
