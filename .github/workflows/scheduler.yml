@@ -1,8 +1,8 @@
 name: University News Bot Scheduler
 
 on:
-  schedule:
-    - cron: '*/30 * * * *'
+schedule:
+    - cron: '17,47 * * * *'
   workflow_dispatch:
     inputs:
       target_platform:
