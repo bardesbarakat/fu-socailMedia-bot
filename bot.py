@@ -7,7 +7,7 @@ from urllib3.util import Retry
 from requests.adapters import HTTPAdapter
 
 # ==========================================
-# 1. Variables
+# 1. Variables (المتغيرات)
 # ==========================================
 PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN")
 PAGE_ID = os.getenv("PAGE_ID")
@@ -20,10 +20,11 @@ SOURCES = [
     "https://www.fayoum.edu.eg/ar/News?tab=events&pageNumber=1&pageSize=6"
 ]
 
-POSTED_FILE = "posted_urls.txt"
+# اسم الملف المُحدث ليطابق الموجود في مستودعك
+POSTED_FILE = "posted_news.txt"
 
 # ==========================================
-# 2. Resilient Session
+# 2. Resilient Session (تهيئة الاتصال)
 # ==========================================
 def create_resilient_session():
     session = requests.Session()
@@ -49,10 +50,10 @@ def save_posted_url(url):
         f.write(url + "\n")
 
 # ==========================================
-# 3. Image Processing (Crop & Upload)
+# 3. Image Processing (معالجة الصورة لإنستجرام)
 # ==========================================
 def process_and_upload_image(image_url):
-    """Downloads, crops to 1:1, and uploads to IMGBB."""
+    """تحميل الصورة، وضع خلفية بيضاء لتصبح 1:1 بدون قص، ثم رفعها لـ IMGBB"""
     if not IMGBB_API_KEY:
         return image_url
     
@@ -61,25 +62,22 @@ def process_and_upload_image(image_url):
         from io import BytesIO
         import base64
 
-        # Download the image
         img_response = requests.get(image_url, timeout=15)
         img = Image.open(BytesIO(img_response.content))
         
-        # Crop to 1:1 Aspect Ratio for Instagram compatibility
+        # إنشاء خلفية بيضاء مربعة بحجم الضلع الأكبر
         width, height = img.size
-        new_size = min(width, height)
-        left = (width - new_size) / 2
-        top = (height - new_size) / 2
-        right = (width + new_size) / 2
-        bottom = (height + new_size) / 2
-        img = img.crop((left, top, right, bottom))
+        new_size = max(width, height)
+        new_img = Image.new("RGB", (new_size, new_size), "white")
         
-        # Convert to Base64
+        # لصق الصورة الأصلية في منتصف المربع الأبيض
+        paste_pos = ((new_size - width) // 2, (new_size - height) // 2)
+        new_img.paste(img, paste_pos)
+        
         buffered = BytesIO()
-        img.save(buffered, format="JPEG")
+        new_img.save(buffered, format="JPEG")
         img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
         
-        # Upload to IMGBB
         url = "https://api.imgbb.com/1/upload"
         payload = {
             "key": IMGBB_API_KEY,
@@ -90,20 +88,20 @@ def process_and_upload_image(image_url):
             return res["data"]["url"]
             
     except Exception as e:
-        pass # Silent fail, try to return original url
+        pass 
     
     return image_url
 
 # ==========================================
-# 4. Publishing Functions
+# 4. Publishing Functions (دوال النشر)
 # ==========================================
 def publish_to_facebook(message, link_url):
     if not PAGE_ACCESS_TOKEN or not PAGE_ID: return False
     try:
         url = f"https://graph.facebook.com/v26.0/{PAGE_ID}/feed"
         payload = {"message": message, "link": link_url, "access_token": PAGE_ACCESS_TOKEN}
-        res = requests.post(url, data=payload, timeout=30).json()
-        if "id" in res: return True
+        requests.post(url, data=payload, timeout=30)
+        return True
     except Exception as e: pass
     return False
 
@@ -117,22 +115,22 @@ def publish_to_instagram(image_url, caption):
         if "id" not in res_media: return False
 
         creation_id = res_media["id"]
-        time.sleep(10)
+        time.sleep(10) # انتظار المعالجة
 
         publish_url = f"https://graph.facebook.com/v26.0/{IG_USER_ID}/media_publish"
         publish_payload = {"creation_id": creation_id, "access_token": PAGE_ACCESS_TOKEN}
-        res_pub = requests.post(publish_url, data=publish_payload, timeout=30).json()
-        
-        if "id" in res_pub: return True
+        requests.post(publish_url, data=publish_payload, timeout=30)
+        return True
     except Exception as e: pass
     return False
 
 # ==========================================
-# 5. Core Logic
+# 5. Core Logic (المنطق الأساسي)
 # ==========================================
 def run():
     posted_urls = get_posted_urls()
     
+    # صيغ التاريخ المحتملة في موقع الجامعة
     today_date_1 = datetime.now().strftime("%Y-%m-%d")
     today_date_2 = datetime.now().strftime("%d/%m/%Y")
     today_date_3 = datetime.now().strftime("%d-%m-%Y")
@@ -151,21 +149,37 @@ def run():
                     
                     if full_url in posted_urls: continue
                     
-                    # Clean title
-                    title = link.get_text(strip=True).replace("اقرأ المزيد", "").replace("اقرا المزيد", "").strip()
-                    
                     article_res = session.get(full_url, timeout=30)
                     if article_res.status_code == 200:
                         article_html = article_res.text
                         article_soup = BeautifulSoup(article_html, "html.parser")
                         
-                        # Date check
+                        # التأكد من تاريخ اليوم
                         if not any(date_fmt in article_html for date_fmt in [today_date_1, today_date_2, today_date_3]):
                             save_posted_url(full_url)
                             posted_urls.add(full_url)
                             continue
                         
-                        # Image extraction
+                        # 1. استخراج العنوان الفعلي
+                        article_title = ""
+                        h_tag = article_soup.find(["h1", "h2", "h3"])
+                        if h_tag:
+                            article_title = h_tag.get_text(strip=True)
+                        if not article_title:
+                            article_title = link.get_text(strip=True).replace("اقرأ المزيد", "").replace("اقرا المزيد", "").strip()
+
+                        # 2. استخراج تفاصيل الخبر
+                        details_list = []
+                        for p in article_soup.find_all("p"):
+                            p_text = p.get_text(strip=True)
+                            if len(p_text) > 30: 
+                                details_list.append(p_text)
+                        
+                        article_details = "\n\n".join(details_list)
+                        if len(article_details) > 1500:
+                            article_details = article_details[:1500] + " ... (متابعة القراءة عبر الرابط)"
+
+                        # 3. استخراج الصورة
                         image_url = None
                         og_image = article_soup.find("meta", property="og:image")
                         if og_image and og_image.get("content"):
@@ -177,17 +191,21 @@ def run():
                                     image_url = src if src.startswith("http") else f"https://www.fayoum.edu.eg{src}"
                                     break
                         
-                        # Process Image
+                        # معالجة الصورة عبر IMGBB
                         if image_url:
                             image_url = process_and_upload_image(image_url)
 
-                        # Publish
-                        publish_to_facebook(message=title, link_url=full_url)
+                        # صياغة المنشورات النهائية
+                        fb_message = f"{article_title}\n\n{article_details}"
+                        ig_caption = f"🔴 {article_title}\n\n{article_details}\n\n🔗 التفاصيل عبر الرابط: {full_url}"
+
+                        # عملية النشر
+                        publish_to_facebook(message=fb_message, link_url=full_url)
 
                         if image_url:
-                            ig_caption = f"{title}\n\nللتفاصيل: {full_url}"
                             publish_to_instagram(image_url=image_url, caption=ig_caption)
                         
+                        # تسجيل الرابط لمنع التكرار
                         save_posted_url(full_url)
                         posted_urls.add(full_url)
                         time.sleep(2)
