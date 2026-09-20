@@ -49,7 +49,7 @@ def save_posted_url(url):
         f.write(url + "\n")
 
 # ==========================================
-# 3. Image Processing (White Padding to 1:1)
+# 3. Image Processing
 # ==========================================
 def process_and_upload_image(image_url):
     if not IMGBB_API_KEY: return None
@@ -140,28 +140,27 @@ def publish_to_instagram(image_urls, caption):
 # ==========================================
 def run():
     posted_urls = get_posted_urls()
+    print(f"[*] تم تحميل {len(posted_urls)} روابط مسجلة مسبقاً.")
     
-    # حساب توقيت مصر التقريبي (UTC + 3)
     now_egypt = datetime.utcnow() + timedelta(hours=3)
-    
     arabic_months = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"]
     month_ar = arabic_months[now_egypt.month - 1]
     
-    # كل صيغ التاريخ المحتملة (بأصفار وبدون أصفار وبالعربي)
     today_formats = [
-        now_egypt.strftime("%Y-%m-%d"),
-        now_egypt.strftime("%d/%m/%Y"),
-        now_egypt.strftime("%d-%m-%Y"),
-        f"{now_egypt.day}/{now_egypt.month}/{now_egypt.year}",
-        f"{now_egypt.day:02d}/{now_egypt.month:02d}/{now_egypt.year}",
-        f"{now_egypt.day} {month_ar} {now_egypt.year}",
-        f"{now_egypt.day:02d} {month_ar} {now_egypt.year}"
+        now_egypt.strftime("%Y-%m-%d"), now_egypt.strftime("%d/%m/%Y"), now_egypt.strftime("%d-%m-%Y"),
+        f"{now_egypt.day}/{now_egypt.month}/{now_egypt.year}", f"{now_egypt.day:02d}/{now_egypt.month:02d}/{now_egypt.year}",
+        f"{now_egypt.day} {month_ar} {now_egypt.year}", f"{now_egypt.day:02d} {month_ar} {now_egypt.year}"
     ]
+    print(f"[*] جاري البحث عن تواريخ اليوم بالصيغ التالية: {today_formats}")
 
     for source_url in SOURCES:
+        print(f"\n[*] جاري فحص الرابط: {source_url}")
         try:
             res = session.get(source_url, timeout=30)
-            if res.status_code != 200: continue
+            if res.status_code != 200:
+                print(f"[!] خطأ: الموقع رفض الاتصال (كود {res.status_code})")
+                continue
+            
             soup = BeautifulSoup(res.text, "html.parser")
             links = soup.find_all("a", href=True)
             
@@ -169,84 +168,71 @@ def run():
                 href = link["href"]
                 if "/News/Details/" in href or "/Announcements/Details/" in href:
                     full_url = href if href.startswith("http") else f"https://www.fayoum.edu.eg{href}"
+                    print(f"\n- تم العثور على خبر: {full_url}")
                     
-                    if full_url in posted_urls: continue
+                    if full_url in posted_urls:
+                        print("  -> الخبر مسجل مسبقاً (تم تخطيه).")
+                        continue
                     
+                    print("  -> خبر جديد! جاري قراءة التفاصيل...")
                     article_res = session.get(full_url, timeout=30)
                     if article_res.status_code == 200:
                         article_html = article_res.text
                         article_soup = BeautifulSoup(article_html, "html.parser")
-                        
-                        # استخراج النص الصافي للبحث عن التاريخ بدقة
                         page_text = article_soup.get_text(separator=" ", strip=True)
                         
-                        # فحص التاريخ الذكي
                         is_today = any(fmt in page_text for fmt in today_formats)
                         
                         if not is_today:
+                            print("  -> الخبر لا يحتوي على تاريخ اليوم. جاري تسجيله وتخطيه.")
                             save_posted_url(full_url)
                             posted_urls.add(full_url)
                             continue
                         
-                        # 1. العنوان
+                        print("  -> تاريخ اليوم متطابق! جاري معالجة الصور والنشر...")
+                        
                         article_title = ""
                         h_tag = article_soup.find(["h1", "h2", "h3"])
-                        if h_tag:
-                            article_title = h_tag.get_text(strip=True)
-                        if not article_title:
-                            article_title = link.get_text(strip=True).replace("اقرأ المزيد", "").strip()
+                        if h_tag: article_title = h_tag.get_text(strip=True)
+                        if not article_title: article_title = link.get_text(strip=True).replace("اقرأ المزيد", "").strip()
 
-                        # 2. التفاصيل
                         details_list = []
                         for p in article_soup.find_all("p"):
                             p_text = p.get_text(strip=True)
-                            if len(p_text) > 30: 
-                                details_list.append(p_text)
+                            if len(p_text) > 30: details_list.append(p_text)
                         
                         article_details = "\n\n".join(details_list)
                         if len(article_details) > 1500:
                             article_details = article_details[:1500] + " ... (اقرأ المزيد على الموقع)"
 
-                        # 3. سحب الصور الصحيحة
                         raw_image_urls = []
                         for img in article_soup.find_all("img"):
                             src = img.get("src", "").strip()
                             if not src or src == "/" or src.startswith("data:"): continue
-                                
                             if "logo" not in src.lower() and "icon" not in src.lower():
-                                if src.startswith("http"):
-                                    full_src = src
+                                if src.startswith("http"): full_src = src
                                 else:
                                     if not src.startswith("/"): src = "/" + src
                                     full_src = f"https://www.fayoum.edu.eg{src}"
-                                    
-                                if full_src not in raw_image_urls:
-                                    raw_image_urls.append(full_src)
-                                    
+                                if full_src not in raw_image_urls: raw_image_urls.append(full_src)
                             if len(raw_image_urls) == 10: break
                         
-                        # 4. المعالجة
                         valid_images = []
                         for img_url in raw_image_urls:
                             processed_url = process_and_upload_image(img_url)
-                            if processed_url:
-                                valid_images.append(processed_url)
+                            if processed_url: valid_images.append(processed_url)
 
-                        # 5. النشر
                         ig_caption = f"🔴 {article_title}\n\n{article_details}\n\n🔗 التفاصيل بالكامل عبر الرابط: {full_url}"
-
                         publish_to_facebook(message="", link_url=full_url)
-
-                        if valid_images:
-                            publish_to_instagram(image_urls=valid_images, caption=ig_caption)
+                        if valid_images: publish_to_instagram(image_urls=valid_images, caption=ig_caption)
                         
-                        # الحفظ
                         save_posted_url(full_url)
                         posted_urls.add(full_url)
+                        print("  -> تم النشر والتسجيل بنجاح!")
                         time.sleep(2)
                         
         except Exception as e: 
-            print(e)
+            print(f"[!] حدث خطأ: {e}")
 
 if __name__ == "__main__":
     run()
