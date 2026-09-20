@@ -212,14 +212,27 @@ def run():
                         if len(article_details) > 1500:
                             article_details = article_details[:1500] + " ... (اقرأ المزيد على الموقع)"
 
-                        # 3. سحب جميع الصور (بحد أقصى 10 لإنستجرام)
+                        # 3. سحب جميع الصور بشكل صحيح وتخطي الروابط الفارغة
                         raw_image_urls = []
                         for img in article_soup.find_all("img"):
-                            src = img.get("src", "")
+                            src = img.get("src", "").strip()
+                            
+                            # تخطي الروابط الفارغة أو التي لا تحتوي على مسار صورة حقيقي
+                            if not src or src == "/" or src.startswith("data:"):
+                                continue
+                                
                             if "logo" not in src.lower() and "icon" not in src.lower():
-                                full_src = src if src.startswith("http") else f"https://www.fayoum.edu.eg{src}"
+                                # بناء الرابط بشكل صحيح
+                                if src.startswith("http"):
+                                    full_src = src
+                                else:
+                                    if not src.startswith("/"):
+                                        src = "/" + src
+                                    full_src = f"https://www.fayoum.edu.eg{src}"
+                                    
                                 if full_src not in raw_image_urls:
                                     raw_image_urls.append(full_src)
+                                    
                             if len(raw_image_urls) == 10:
                                 break
                         
