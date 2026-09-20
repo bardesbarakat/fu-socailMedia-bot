@@ -1,7 +1,7 @@
 import os
 import time
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 from urllib3.util import Retry
 from requests.adapters import HTTPAdapter
@@ -52,22 +52,16 @@ def save_posted_url(url):
 # 3. Image Processing (White Padding to 1:1)
 # ==========================================
 def process_and_upload_image(image_url):
-    """Downloads, adds white padding to make it 1:1, and uploads to IMGBB."""
-    if not IMGBB_API_KEY:
-        return None
-    
+    if not IMGBB_API_KEY: return None
     try:
         from PIL import Image
         from io import BytesIO
         import base64
 
         img_response = requests.get(image_url, timeout=15)
-        if img_response.status_code != 200:
-            return None
+        if img_response.status_code != 200: return None
             
         img = Image.open(BytesIO(img_response.content))
-        
-        # إضافة خلفية بيضاء لجعل الصورة مربعة 1:1 بدون قص
         width, height = img.size
         new_size = max(width, height)
         new_img = Image.new("RGB", (new_size, new_size), "white")
@@ -80,17 +74,12 @@ def process_and_upload_image(image_url):
         img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
         
         url = "https://api.imgbb.com/1/upload"
-        payload = {
-            "key": IMGBB_API_KEY,
-            "image": img_str
-        }
+        payload = {"key": IMGBB_API_KEY, "image": img_str}
         res = requests.post(url, data=payload, timeout=30).json()
         if res.get("success"):
             return res["data"]["url"]
-            
     except Exception as e:
-        print(f"Error processing image {image_url}: {e}")
-    
+        print(f"Error processing image: {e}")
     return None
 
 # ==========================================
@@ -100,41 +89,32 @@ def publish_to_facebook(message, link_url):
     if not PAGE_ACCESS_TOKEN or not PAGE_ID: return False
     try:
         url = f"https://graph.facebook.com/v26.0/{PAGE_ID}/feed"
-        # تمرير رسالة فارغة لضمان ظهور رابط المعاينة فقط بدون نصوص إضافية
         payload = {"message": "", "link": link_url, "access_token": PAGE_ACCESS_TOKEN}
         requests.post(url, data=payload, timeout=30)
         return True
-    except Exception as e: pass
+    except Exception: pass
     return False
 
 def publish_to_instagram(image_urls, caption):
     if not PAGE_ACCESS_TOKEN or not IG_USER_ID or not image_urls: return False
-    
     try:
         if len(image_urls) == 1:
-            # نشر صورة واحدة عادية
             media_url = f"https://graph.facebook.com/v26.0/{IG_USER_ID}/media"
             media_payload = {"image_url": image_urls[0], "caption": caption, "access_token": PAGE_ACCESS_TOKEN}
             res_media = requests.post(media_url, data=media_payload, timeout=30).json()
-            
             if "id" not in res_media: return False
             creation_id = res_media["id"]
             time.sleep(10)
-            
         else:
-            # نشر ألبوم (Carousel)
             item_ids = []
             for img_url in image_urls:
                 media_url = f"https://graph.facebook.com/v26.0/{IG_USER_ID}/media"
                 payload = {"image_url": img_url, "is_carousel_item": "true", "access_token": PAGE_ACCESS_TOKEN}
                 res = requests.post(media_url, data=payload, timeout=30).json()
-                if "id" in res:
-                    item_ids.append(res["id"])
-                time.sleep(2) # انتظار بسيط لتجنب حظر واجهة البرمجة
-            
+                if "id" in res: item_ids.append(res["id"])
+                time.sleep(2)
             if not item_ids: return False
             
-            # إنشاء حاوية الألبوم
             container_url = f"https://graph.facebook.com/v26.0/{IG_USER_ID}/media"
             container_payload = {
                 "media_type": "CAROUSEL",
@@ -143,17 +123,14 @@ def publish_to_instagram(image_urls, caption):
                 "access_token": PAGE_ACCESS_TOKEN
             }
             res_container = requests.post(container_url, data=container_payload, timeout=30).json()
-            
             if "id" not in res_container: return False
             creation_id = res_container["id"]
-            time.sleep(15) # انتظار أطول لمعالجة الألبوم
+            time.sleep(15)
             
-        # خطوة النشر النهائية (مشتركة للصورة المفردة والألبوم)
         publish_url = f"https://graph.facebook.com/v26.0/{IG_USER_ID}/media_publish"
         publish_payload = {"creation_id": creation_id, "access_token": PAGE_ACCESS_TOKEN}
         requests.post(publish_url, data=publish_payload, timeout=30)
         return True
-        
     except Exception as e: 
         print(f"IG Publish Error: {e}")
     return False
@@ -164,9 +141,22 @@ def publish_to_instagram(image_urls, caption):
 def run():
     posted_urls = get_posted_urls()
     
-    today_date_1 = datetime.now().strftime("%Y-%m-%d")
-    today_date_2 = datetime.now().strftime("%d/%m/%Y")
-    today_date_3 = datetime.now().strftime("%d-%m-%Y")
+    # حساب توقيت مصر التقريبي (UTC + 3)
+    now_egypt = datetime.utcnow() + timedelta(hours=3)
+    
+    arabic_months = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"]
+    month_ar = arabic_months[now_egypt.month - 1]
+    
+    # كل صيغ التاريخ المحتملة (بأصفار وبدون أصفار وبالعربي)
+    today_formats = [
+        now_egypt.strftime("%Y-%m-%d"),
+        now_egypt.strftime("%d/%m/%Y"),
+        now_egypt.strftime("%d-%m-%Y"),
+        f"{now_egypt.day}/{now_egypt.month}/{now_egypt.year}",
+        f"{now_egypt.day:02d}/{now_egypt.month:02d}/{now_egypt.year}",
+        f"{now_egypt.day} {month_ar} {now_egypt.year}",
+        f"{now_egypt.day:02d} {month_ar} {now_egypt.year}"
+    ]
 
     for source_url in SOURCES:
         try:
@@ -187,13 +177,18 @@ def run():
                         article_html = article_res.text
                         article_soup = BeautifulSoup(article_html, "html.parser")
                         
-                        # Date check
-                        if not any(date_fmt in article_html for date_fmt in [today_date_1, today_date_2, today_date_3]):
+                        # استخراج النص الصافي للبحث عن التاريخ بدقة
+                        page_text = article_soup.get_text(separator=" ", strip=True)
+                        
+                        # فحص التاريخ الذكي
+                        is_today = any(fmt in page_text for fmt in today_formats)
+                        
+                        if not is_today:
                             save_posted_url(full_url)
                             posted_urls.add(full_url)
                             continue
                         
-                        # 1. استخراج العنوان
+                        # 1. العنوان
                         article_title = ""
                         h_tag = article_soup.find(["h1", "h2", "h3"])
                         if h_tag:
@@ -201,7 +196,7 @@ def run():
                         if not article_title:
                             article_title = link.get_text(strip=True).replace("اقرأ المزيد", "").strip()
 
-                        # 2. استخراج التفاصيل
+                        # 2. التفاصيل
                         details_list = []
                         for p in article_soup.find_all("p"):
                             p_text = p.get_text(strip=True)
@@ -212,38 +207,32 @@ def run():
                         if len(article_details) > 1500:
                             article_details = article_details[:1500] + " ... (اقرأ المزيد على الموقع)"
 
-                        # 3. سحب جميع الصور بشكل صحيح وتخطي الروابط الفارغة
+                        # 3. سحب الصور الصحيحة
                         raw_image_urls = []
                         for img in article_soup.find_all("img"):
                             src = img.get("src", "").strip()
-                            
-                            # تخطي الروابط الفارغة أو التي لا تحتوي على مسار صورة حقيقي
-                            if not src or src == "/" or src.startswith("data:"):
-                                continue
+                            if not src or src == "/" or src.startswith("data:"): continue
                                 
                             if "logo" not in src.lower() and "icon" not in src.lower():
-                                # بناء الرابط بشكل صحيح
                                 if src.startswith("http"):
                                     full_src = src
                                 else:
-                                    if not src.startswith("/"):
-                                        src = "/" + src
+                                    if not src.startswith("/"): src = "/" + src
                                     full_src = f"https://www.fayoum.edu.eg{src}"
                                     
                                 if full_src not in raw_image_urls:
                                     raw_image_urls.append(full_src)
                                     
-                            if len(raw_image_urls) == 10:
-                                break
+                            if len(raw_image_urls) == 10: break
                         
-                        # 4. معالجة الصور (إضافة الخلفية البيضاء ورفعها)
+                        # 4. المعالجة
                         valid_images = []
                         for img_url in raw_image_urls:
                             processed_url = process_and_upload_image(img_url)
                             if processed_url:
                                 valid_images.append(processed_url)
 
-                        # 5. صياغة الكابشن والنشر
+                        # 5. النشر
                         ig_caption = f"🔴 {article_title}\n\n{article_details}\n\n🔗 التفاصيل بالكامل عبر الرابط: {full_url}"
 
                         publish_to_facebook(message="", link_url=full_url)
@@ -251,7 +240,7 @@ def run():
                         if valid_images:
                             publish_to_instagram(image_urls=valid_images, caption=ig_caption)
                         
-                        # التسجيل لمنع التكرار
+                        # الحفظ
                         save_posted_url(full_url)
                         posted_urls.add(full_url)
                         time.sleep(2)
