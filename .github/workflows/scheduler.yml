@@ -49,6 +49,6 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          touch posted_fb.txt posted_ig.txt
-          git add posted_fb.txt posted_ig.txt
-          git diff --staged --quiet || (git commit -m "Update platform logs" && git push)
+          touch posted_news.txt
+          git add posted_news.txt
+          git diff --staged --quiet || (git commit -m "Update posted_news.txt" && git push)
