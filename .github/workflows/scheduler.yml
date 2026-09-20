@@ -52,3 +52,5 @@ jobs:
           touch posted_news.txt
           git add posted_news.txt
           git diff --staged --quiet || (git commit -m "Update posted_news.txt" && git push)
+
+# Force cron update
