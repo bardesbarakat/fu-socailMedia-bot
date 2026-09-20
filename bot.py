@@ -79,61 +79,82 @@ def process_and_upload_image(image_url):
         if res.get("success"):
             return res["data"]["url"]
     except Exception as e:
-        print(f"Error processing image: {e}")
+        print(f"[!] خطأ في معالجة الصور: {e}")
     return None
 
 # ==========================================
 # 4. Publishing Functions
 # ==========================================
 def publish_to_facebook(message, link_url):
-    if not PAGE_ACCESS_TOKEN or not PAGE_ID: return False
+    if not PAGE_ACCESS_TOKEN or not PAGE_ID:
+        print("[-] خطأ: بيانات فيسبوك (Token أو ID) غير موجودة في الـ Secrets!")
+        return False
     try:
-        url = f"https://graph.facebook.com/v26.0/{PAGE_ID}/feed"
-        payload = {"message": "", "link": link_url, "access_token": PAGE_ACCESS_TOKEN}
-        requests.post(url, data=payload, timeout=30)
-        return True
-    except Exception: pass
-    return False
+        url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
+        payload = {"message": message, "link": link_url, "access_token": PAGE_ACCESS_TOKEN}
+        res = requests.post(url, data=payload, timeout=30)
+        if res.status_code == 200:
+            print("  [+] تم النشر على فيسبوك بنجاح.")
+            return True
+        else:
+            print(f"  [-] فيسبوك رفض النشر. السبب: {res.text}")
+            return False
+    except Exception as e: 
+        print(f"  [-] خطأ تقني أثناء النشر على فيسبوك: {e}")
+        return False
 
 def publish_to_instagram(image_urls, caption):
     if not PAGE_ACCESS_TOKEN or not IG_USER_ID or not image_urls: return False
     try:
         if len(image_urls) == 1:
-            media_url = f"https://graph.facebook.com/v26.0/{IG_USER_ID}/media"
+            media_url = f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media"
             media_payload = {"image_url": image_urls[0], "caption": caption, "access_token": PAGE_ACCESS_TOKEN}
-            res_media = requests.post(media_url, data=media_payload, timeout=30).json()
-            if "id" not in res_media: return False
-            creation_id = res_media["id"]
+            res_media = requests.post(media_url, data=media_payload, timeout=30)
+            if res_media.status_code != 200:
+                print(f"  [-] إنستجرام رفض الصورة. السبب: {res_media.text}")
+                return False
+            
+            creation_id = res_media.json().get("id")
             time.sleep(10)
         else:
             item_ids = []
             for img_url in image_urls:
-                media_url = f"https://graph.facebook.com/v26.0/{IG_USER_ID}/media"
+                media_url = f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media"
                 payload = {"image_url": img_url, "is_carousel_item": "true", "access_token": PAGE_ACCESS_TOKEN}
-                res = requests.post(media_url, data=payload, timeout=30).json()
-                if "id" in res: item_ids.append(res["id"])
+                res = requests.post(media_url, data=payload, timeout=30)
+                if res.status_code == 200:
+                    item_ids.append(res.json().get("id"))
                 time.sleep(2)
             if not item_ids: return False
             
-            container_url = f"https://graph.facebook.com/v26.0/{IG_USER_ID}/media"
+            container_url = f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media"
             container_payload = {
                 "media_type": "CAROUSEL",
                 "children": ",".join(item_ids),
                 "caption": caption,
                 "access_token": PAGE_ACCESS_TOKEN
             }
-            res_container = requests.post(container_url, data=container_payload, timeout=30).json()
-            if "id" not in res_container: return False
-            creation_id = res_container["id"]
+            res_container = requests.post(container_url, data=container_payload, timeout=30)
+            if res_container.status_code != 200:
+                print(f"  [-] إنستجرام رفض الألبوم. السبب: {res_container.text}")
+                return False
+                
+            creation_id = res_container.json().get("id")
             time.sleep(15)
             
-        publish_url = f"https://graph.facebook.com/v26.0/{IG_USER_ID}/media_publish"
+        publish_url = f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media_publish"
         publish_payload = {"creation_id": creation_id, "access_token": PAGE_ACCESS_TOKEN}
-        requests.post(publish_url, data=publish_payload, timeout=30)
-        return True
+        publish_res = requests.post(publish_url, data=publish_payload, timeout=30)
+        if publish_res.status_code == 200:
+            print("  [+] تم النشر على إنستجرام بنجاح.")
+            return True
+        else:
+            print(f"  [-] فشل النشر النهائي على إنستجرام. السبب: {publish_res.text}")
+            return False
+            
     except Exception as e: 
-        print(f"IG Publish Error: {e}")
-    return False
+        print(f"  [-] خطأ تقني أثناء النشر على إنستجرام: {e}")
+        return False
 
 # ==========================================
 # 5. Core Logic
@@ -151,15 +172,12 @@ def run():
         f"{now_egypt.day}/{now_egypt.month}/{now_egypt.year}", f"{now_egypt.day:02d}/{now_egypt.month:02d}/{now_egypt.year}",
         f"{now_egypt.day} {month_ar} {now_egypt.year}", f"{now_egypt.day:02d} {month_ar} {now_egypt.year}"
     ]
-    print(f"[*] جاري البحث عن تواريخ اليوم بالصيغ التالية: {today_formats}")
 
     for source_url in SOURCES:
         print(f"\n[*] جاري فحص الرابط: {source_url}")
         try:
             res = session.get(source_url, timeout=30)
-            if res.status_code != 200:
-                print(f"[!] خطأ: الموقع رفض الاتصال (كود {res.status_code})")
-                continue
+            if res.status_code != 200: continue
             
             soup = BeautifulSoup(res.text, "html.parser")
             links = soup.find_all("a", href=True)
@@ -168,13 +186,11 @@ def run():
                 href = link["href"]
                 if "/News/Details/" in href or "/Announcements/Details/" in href:
                     full_url = href if href.startswith("http") else f"https://www.fayoum.edu.eg{href}"
-                    print(f"\n- تم العثور على خبر: {full_url}")
                     
                     if full_url in posted_urls:
-                        print("  -> الخبر مسجل مسبقاً (تم تخطيه).")
                         continue
                     
-                    print("  -> خبر جديد! جاري قراءة التفاصيل...")
+                    print(f"\n- خبر جديد: {full_url}")
                     article_res = session.get(full_url, timeout=30)
                     if article_res.status_code == 200:
                         article_html = article_res.text
@@ -184,12 +200,11 @@ def run():
                         is_today = any(fmt in page_text for fmt in today_formats)
                         
                         if not is_today:
-                            print("  -> الخبر لا يحتوي على تاريخ اليوم. جاري تسجيله وتخطيه.")
                             save_posted_url(full_url)
                             posted_urls.add(full_url)
                             continue
                         
-                        print("  -> تاريخ اليوم متطابق! جاري معالجة الصور والنشر...")
+                        print("  -> التاريخ متطابق. جاري تجهيز المنشور...")
                         
                         article_title = ""
                         h_tag = article_soup.find(["h1", "h2", "h3"])
@@ -223,16 +238,24 @@ def run():
                             if processed_url: valid_images.append(processed_url)
 
                         ig_caption = f"🔴 {article_title}\n\n{article_details}\n\n🔗 التفاصيل بالكامل عبر الرابط: {full_url}"
-                        publish_to_facebook(message="", link_url=full_url)
-                        if valid_images: publish_to_instagram(image_urls=valid_images, caption=ig_caption)
                         
-                        save_posted_url(full_url)
-                        posted_urls.add(full_url)
-                        print("  -> تم النشر والتسجيل بنجاح!")
+                        fb_status = publish_to_facebook(message="", link_url=full_url)
+                        ig_status = False
+                        if valid_images:
+                            ig_status = publish_to_instagram(image_urls=valid_images, caption=ig_caption)
+                        
+                        # التسجيل فقط إذا نجح النشر على أي منصة
+                        if fb_status or ig_status:
+                            save_posted_url(full_url)
+                            posted_urls.add(full_url)
+                            print("  -> [تم الحفظ] تم تسجيل الخبر في الملف لمنع التكرار.")
+                        else:
+                            print("  -> [تحذير] لم يتم نشر الخبر بنجاح، ولن يتم تسجيله (سيحاول البوت مرة أخرى لاحقاً).")
+                        
                         time.sleep(2)
                         
         except Exception as e: 
-            print(f"[!] حدث خطأ: {e}")
+            print(f"[!] حدث خطأ أثناء المعالجة: {e}")
 
 if __name__ == "__main__":
     run()
