@@ -20,7 +20,6 @@ SOURCES = [
     "https://www.fayoum.edu.eg/ar/News?tab=events&pageNumber=1&pageSize=6"
 ]
 
-# اسم الملف المُحدث ليطابق الموجود في مستودعك
 POSTED_FILE = "posted_news.txt"
 
 # ==========================================
@@ -42,12 +41,13 @@ session = create_resilient_session()
 def get_posted_urls():
     if os.path.exists(POSTED_FILE):
         with open(POSTED_FILE, "r", encoding="utf-8") as f:
-            return set(f.read().splitlines())
+            # قراءة الروابط مع التأكد من إزالة أي مسافات زائدة لمنع التكرار
+            return set(line.strip() for line in f if line.strip())
     return set()
 
 def save_posted_url(url):
     with open(POSTED_FILE, "a", encoding="utf-8") as f:
-        f.write(url + "\n")
+        f.write(url.strip() + "\n")
 
 # ==========================================
 # 3. Image Processing (معالجة الصورة لإنستجرام)
@@ -99,7 +99,11 @@ def publish_to_facebook(message, link_url):
     if not PAGE_ACCESS_TOKEN or not PAGE_ID: return False
     try:
         url = f"https://graph.facebook.com/v26.0/{PAGE_ID}/feed"
-        payload = {"message": message, "link": link_url, "access_token": PAGE_ACCESS_TOKEN}
+        # إذا تم تمرير رسالة فارغة، سيقوم فيسبوك بعرض رابط المعاينة فقط
+        payload = {"link": link_url, "access_token": PAGE_ACCESS_TOKEN}
+        if message: 
+            payload["message"] = message
+            
         requests.post(url, data=payload, timeout=30)
         return True
     except Exception as e: pass
@@ -168,7 +172,7 @@ def run():
                         if not article_title:
                             article_title = link.get_text(strip=True).replace("اقرأ المزيد", "").replace("اقرا المزيد", "").strip()
 
-                        # 2. استخراج تفاصيل الخبر
+                        # 2. استخراج تفاصيل الخبر (من أجل إنستجرام فقط)
                         details_list = []
                         for p in article_soup.find_all("p"):
                             p_text = p.get_text(strip=True)
@@ -195,14 +199,12 @@ def run():
                         if image_url:
                             image_url = process_and_upload_image(image_url)
 
-                        # صياغة المنشورات النهائية
-                        fb_message = f"{article_title}\n\n{article_details}"
-                        ig_caption = f"🔴 {article_title}\n\n{article_details}\n\n🔗 التفاصيل عبر الرابط: {full_url}"
+                        # 🔴 التعديل هنا: إرسال نص فارغ لفيسبوك لمنع ظهور أي كلام فوق الصورة
+                        publish_to_facebook(message="", link_url=full_url)
 
-                        # عملية النشر
-                        publish_to_facebook(message=fb_message, link_url=full_url)
-
+                        # إرسال التفاصيل كاملة لإنستجرام فقط
                         if image_url:
+                            ig_caption = f"🔴 {article_title}\n\n{article_details}\n\n🔗 التفاصيل عبر الرابط: {full_url}"
                             publish_to_instagram(image_url=image_url, caption=ig_caption)
                         
                         # تسجيل الرابط لمنع التكرار
