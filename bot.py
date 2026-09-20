@@ -7,7 +7,7 @@ from urllib3.util import Retry
 from requests.adapters import HTTPAdapter
 
 # ==========================================
-# 1. Variables (المتغيرات)
+# 1. Variables
 # ==========================================
 PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN")
 PAGE_ID = os.getenv("PAGE_ID")
@@ -23,7 +23,7 @@ SOURCES = [
 POSTED_FILE = "posted_news.txt"
 
 # ==========================================
-# 2. Resilient Session (تهيئة الاتصال)
+# 2. Resilient Session
 # ==========================================
 def create_resilient_session():
     session = requests.Session()
@@ -41,21 +41,20 @@ session = create_resilient_session()
 def get_posted_urls():
     if os.path.exists(POSTED_FILE):
         with open(POSTED_FILE, "r", encoding="utf-8") as f:
-            # قراءة الروابط مع التأكد من إزالة أي مسافات زائدة لمنع التكرار
-            return set(line.strip() for line in f if line.strip())
+            return set(f.read().splitlines())
     return set()
 
 def save_posted_url(url):
     with open(POSTED_FILE, "a", encoding="utf-8") as f:
-        f.write(url.strip() + "\n")
+        f.write(url + "\n")
 
 # ==========================================
-# 3. Image Processing (معالجة الصورة لإنستجرام)
+# 3. Image Processing (White Padding to 1:1)
 # ==========================================
 def process_and_upload_image(image_url):
-    """تحميل الصورة، وضع خلفية بيضاء لتصبح 1:1 بدون قص، ثم رفعها لـ IMGBB"""
+    """Downloads, adds white padding to make it 1:1, and uploads to IMGBB."""
     if not IMGBB_API_KEY:
-        return image_url
+        return None
     
     try:
         from PIL import Image
@@ -63,14 +62,16 @@ def process_and_upload_image(image_url):
         import base64
 
         img_response = requests.get(image_url, timeout=15)
+        if img_response.status_code != 200:
+            return None
+            
         img = Image.open(BytesIO(img_response.content))
         
-        # إنشاء خلفية بيضاء مربعة بحجم الضلع الأكبر
+        # إضافة خلفية بيضاء لجعل الصورة مربعة 1:1 بدون قص
         width, height = img.size
         new_size = max(width, height)
         new_img = Image.new("RGB", (new_size, new_size), "white")
         
-        # لصق الصورة الأصلية في منتصف المربع الأبيض
         paste_pos = ((new_size - width) // 2, (new_size - height) // 2)
         new_img.paste(img, paste_pos)
         
@@ -88,53 +89,81 @@ def process_and_upload_image(image_url):
             return res["data"]["url"]
             
     except Exception as e:
-        pass 
+        print(f"Error processing image {image_url}: {e}")
     
-    return image_url
+    return None
 
 # ==========================================
-# 4. Publishing Functions (دوال النشر)
+# 4. Publishing Functions
 # ==========================================
 def publish_to_facebook(message, link_url):
     if not PAGE_ACCESS_TOKEN or not PAGE_ID: return False
     try:
         url = f"https://graph.facebook.com/v26.0/{PAGE_ID}/feed"
-        # إذا تم تمرير رسالة فارغة، سيقوم فيسبوك بعرض رابط المعاينة فقط
-        payload = {"link": link_url, "access_token": PAGE_ACCESS_TOKEN}
-        if message: 
-            payload["message"] = message
-            
+        # تمرير رسالة فارغة لضمان ظهور رابط المعاينة فقط بدون نصوص إضافية
+        payload = {"message": "", "link": link_url, "access_token": PAGE_ACCESS_TOKEN}
         requests.post(url, data=payload, timeout=30)
         return True
     except Exception as e: pass
     return False
 
-def publish_to_instagram(image_url, caption):
-    if not PAGE_ACCESS_TOKEN or not IG_USER_ID or not image_url: return False
+def publish_to_instagram(image_urls, caption):
+    if not PAGE_ACCESS_TOKEN or not IG_USER_ID or not image_urls: return False
+    
     try:
-        media_url = f"https://graph.facebook.com/v26.0/{IG_USER_ID}/media"
-        media_payload = {"image_url": image_url, "caption": caption, "access_token": PAGE_ACCESS_TOKEN}
-        res_media = requests.post(media_url, data=media_payload, timeout=30).json()
-
-        if "id" not in res_media: return False
-
-        creation_id = res_media["id"]
-        time.sleep(10) # انتظار المعالجة
-
+        if len(image_urls) == 1:
+            # نشر صورة واحدة عادية
+            media_url = f"https://graph.facebook.com/v26.0/{IG_USER_ID}/media"
+            media_payload = {"image_url": image_urls[0], "caption": caption, "access_token": PAGE_ACCESS_TOKEN}
+            res_media = requests.post(media_url, data=media_payload, timeout=30).json()
+            
+            if "id" not in res_media: return False
+            creation_id = res_media["id"]
+            time.sleep(10)
+            
+        else:
+            # نشر ألبوم (Carousel)
+            item_ids = []
+            for img_url in image_urls:
+                media_url = f"https://graph.facebook.com/v26.0/{IG_USER_ID}/media"
+                payload = {"image_url": img_url, "is_carousel_item": "true", "access_token": PAGE_ACCESS_TOKEN}
+                res = requests.post(media_url, data=payload, timeout=30).json()
+                if "id" in res:
+                    item_ids.append(res["id"])
+                time.sleep(2) # انتظار بسيط لتجنب حظر واجهة البرمجة
+            
+            if not item_ids: return False
+            
+            # إنشاء حاوية الألبوم
+            container_url = f"https://graph.facebook.com/v26.0/{IG_USER_ID}/media"
+            container_payload = {
+                "media_type": "CAROUSEL",
+                "children": ",".join(item_ids),
+                "caption": caption,
+                "access_token": PAGE_ACCESS_TOKEN
+            }
+            res_container = requests.post(container_url, data=container_payload, timeout=30).json()
+            
+            if "id" not in res_container: return False
+            creation_id = res_container["id"]
+            time.sleep(15) # انتظار أطول لمعالجة الألبوم
+            
+        # خطوة النشر النهائية (مشتركة للصورة المفردة والألبوم)
         publish_url = f"https://graph.facebook.com/v26.0/{IG_USER_ID}/media_publish"
         publish_payload = {"creation_id": creation_id, "access_token": PAGE_ACCESS_TOKEN}
         requests.post(publish_url, data=publish_payload, timeout=30)
         return True
-    except Exception as e: pass
+        
+    except Exception as e: 
+        print(f"IG Publish Error: {e}")
     return False
 
 # ==========================================
-# 5. Core Logic (المنطق الأساسي)
+# 5. Core Logic
 # ==========================================
 def run():
     posted_urls = get_posted_urls()
     
-    # صيغ التاريخ المحتملة في موقع الجامعة
     today_date_1 = datetime.now().strftime("%Y-%m-%d")
     today_date_2 = datetime.now().strftime("%d/%m/%Y")
     today_date_3 = datetime.now().strftime("%d-%m-%Y")
@@ -158,21 +187,21 @@ def run():
                         article_html = article_res.text
                         article_soup = BeautifulSoup(article_html, "html.parser")
                         
-                        # التأكد من تاريخ اليوم
+                        # Date check
                         if not any(date_fmt in article_html for date_fmt in [today_date_1, today_date_2, today_date_3]):
                             save_posted_url(full_url)
                             posted_urls.add(full_url)
                             continue
                         
-                        # 1. استخراج العنوان الفعلي
+                        # 1. استخراج العنوان
                         article_title = ""
                         h_tag = article_soup.find(["h1", "h2", "h3"])
                         if h_tag:
                             article_title = h_tag.get_text(strip=True)
                         if not article_title:
-                            article_title = link.get_text(strip=True).replace("اقرأ المزيد", "").replace("اقرا المزيد", "").strip()
+                            article_title = link.get_text(strip=True).replace("اقرأ المزيد", "").strip()
 
-                        # 2. استخراج تفاصيل الخبر (من أجل إنستجرام فقط)
+                        # 2. استخراج التفاصيل
                         details_list = []
                         for p in article_soup.find_all("p"):
                             p_text = p.get_text(strip=True)
@@ -181,38 +210,41 @@ def run():
                         
                         article_details = "\n\n".join(details_list)
                         if len(article_details) > 1500:
-                            article_details = article_details[:1500] + " ... (متابعة القراءة عبر الرابط)"
+                            article_details = article_details[:1500] + " ... (اقرأ المزيد على الموقع)"
 
-                        # 3. استخراج الصورة
-                        image_url = None
-                        og_image = article_soup.find("meta", property="og:image")
-                        if og_image and og_image.get("content"):
-                            image_url = og_image["content"]
-                        else:
-                            for img in article_soup.find_all("img"):
-                                src = img.get("src", "")
-                                if "logo" not in src.lower() and "icon" not in src.lower():
-                                    image_url = src if src.startswith("http") else f"https://www.fayoum.edu.eg{src}"
-                                    break
+                        # 3. سحب جميع الصور (بحد أقصى 10 لإنستجرام)
+                        raw_image_urls = []
+                        for img in article_soup.find_all("img"):
+                            src = img.get("src", "")
+                            if "logo" not in src.lower() and "icon" not in src.lower():
+                                full_src = src if src.startswith("http") else f"https://www.fayoum.edu.eg{src}"
+                                if full_src not in raw_image_urls:
+                                    raw_image_urls.append(full_src)
+                            if len(raw_image_urls) == 10:
+                                break
                         
-                        # معالجة الصورة عبر IMGBB
-                        if image_url:
-                            image_url = process_and_upload_image(image_url)
+                        # 4. معالجة الصور (إضافة الخلفية البيضاء ورفعها)
+                        valid_images = []
+                        for img_url in raw_image_urls:
+                            processed_url = process_and_upload_image(img_url)
+                            if processed_url:
+                                valid_images.append(processed_url)
 
-                        # 🔴 التعديل هنا: إرسال نص فارغ لفيسبوك لمنع ظهور أي كلام فوق الصورة
+                        # 5. صياغة الكابشن والنشر
+                        ig_caption = f"🔴 {article_title}\n\n{article_details}\n\n🔗 التفاصيل بالكامل عبر الرابط: {full_url}"
+
                         publish_to_facebook(message="", link_url=full_url)
 
-                        # إرسال التفاصيل كاملة لإنستجرام فقط
-                        if image_url:
-                            ig_caption = f"🔴 {article_title}\n\n{article_details}\n\n🔗 التفاصيل عبر الرابط: {full_url}"
-                            publish_to_instagram(image_url=image_url, caption=ig_caption)
+                        if valid_images:
+                            publish_to_instagram(image_urls=valid_images, caption=ig_caption)
                         
-                        # تسجيل الرابط لمنع التكرار
+                        # التسجيل لمنع التكرار
                         save_posted_url(full_url)
                         posted_urls.add(full_url)
                         time.sleep(2)
                         
-        except Exception as e: pass
+        except Exception as e: 
+            print(e)
 
 if __name__ == "__main__":
     run()
