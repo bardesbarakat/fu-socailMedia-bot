@@ -5,14 +5,22 @@ from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 from urllib3.util import Retry
 from requests.adapters import HTTPAdapter
+import cloudinary
+import cloudinary.uploader
 
 # ==========================================
-# 1. Variables
+# 1. Variables & Config
 # ==========================================
 PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN")
 PAGE_ID = os.getenv("PAGE_ID")
 IG_USER_ID = os.getenv("IG_USER_ID")
-IMGBB_API_KEY = os.getenv("IMGBB_API_KEY")
+
+# إعدادات Cloudinary
+cloudinary.config(
+  cloud_name = os.getenv('CLOUDINARY_CLOUD_NAME'),
+  api_key = os.getenv('CLOUDINARY_API_KEY'),
+  api_secret = os.getenv('CLOUDINARY_API_SECRET')
+)
 
 SOURCES = [
     "https://www.fayoum.edu.eg/ar/News?tab=news&pageNumber=1&pageSize=6",
@@ -49,38 +57,17 @@ def save_posted_url(url):
         f.write(url + "\n")
 
 # ==========================================
-# 3. Image Processing
+# 3. Image Processing (Cloudinary)
 # ==========================================
 def process_and_upload_image(image_url):
-    if not IMGBB_API_KEY: return None
     try:
-        from PIL import Image
-        from io import BytesIO
-        import base64
-
-        img_response = requests.get(image_url, timeout=15)
-        if img_response.status_code != 200: return None
-            
-        img = Image.open(BytesIO(img_response.content))
-        width, height = img.size
-        new_size = max(width, height)
-        new_img = Image.new("RGB", (new_size, new_size), "white")
-        
-        paste_pos = ((new_size - width) // 2, (new_size - height) // 2)
-        new_img.paste(img, paste_pos)
-        
-        buffered = BytesIO()
-        new_img.save(buffered, format="JPEG")
-        img_str = base64.b64encode(buffered.getvalue()).decode("utf-8")
-        
-        url = "https://api.imgbb.com/1/upload"
-        payload = {"key": IMGBB_API_KEY, "image": img_str}
-        res = requests.post(url, data=payload, timeout=30).json()
-        if res.get("success"):
-            return res["data"]["url"]
+        # رفع الصورة مباشرة من رابط موقع الجامعة إلى كلاوديناري
+        response = cloudinary.uploader.upload(image_url)
+        # استخراج الرابط الآمن للصورة بعد رفعها
+        return response.get('secure_url')
     except Exception as e:
-        print(f"[!] خطأ في معالجة الصور: {e}")
-    return None
+        print(f"[!] خطأ في رفع الصورة على Cloudinary: {e}")
+        return None
 
 # ==========================================
 # 4. Publishing Functions
