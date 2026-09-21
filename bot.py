@@ -63,88 +63,53 @@ def process_and_upload_image(image_url):
         response = cloudinary.uploader.upload(image_url)
         return response.get('secure_url')
     except Exception as e:
-        print(f"[!] خطأ في رفع الصورة على Cloudinary: {e}")
+        print(f"[!] خطأ في رفع الصورة: {e}")
         return None
 
 # ==========================================
 # 4. Publishing Functions
 # ==========================================
 def publish_to_facebook(message, link_url):
-    if not PAGE_ACCESS_TOKEN or not PAGE_ID:
-        return False
+    if not PAGE_ACCESS_TOKEN or not PAGE_ID: return False
     try:
         url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
         payload = {"message": message, "link": link_url, "access_token": PAGE_ACCESS_TOKEN}
         res = requests.post(url, data=payload, timeout=30)
-        if res.status_code == 200:
-            print("  [+] تم النشر على فيسبوك بنجاح.")
-            return True
-        else:
-            print(f"  [-] فيسبوك رفض النشر. السبب: {res.text}")
-            return False
-    except Exception as e: 
-        print(f"  [-] خطأ تقني أثناء النشر على فيسبوك: {e}")
-        return False
+        return res.status_code == 200
+    except: return False
 
 def publish_to_instagram(image_urls, caption):
     if not PAGE_ACCESS_TOKEN or not IG_USER_ID or not image_urls: return False
     try:
         if len(image_urls) == 1:
             media_url = f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media"
-            media_payload = {"image_url": image_urls[0], "caption": caption, "access_token": PAGE_ACCESS_TOKEN}
-            res_media = requests.post(media_url, data=media_payload, timeout=30)
-            if res_media.status_code != 200:
-                print(f"  [-] إنستجرام رفض الصورة. السبب: {res_media.text}")
-                return False
-            
+            res_media = requests.post(media_url, data={"image_url": image_urls[0], "caption": caption, "access_token": PAGE_ACCESS_TOKEN}, timeout=30)
+            if res_media.status_code != 200: return False
             creation_id = res_media.json().get("id")
             time.sleep(10)
         else:
             item_ids = []
             for img_url in image_urls:
-                media_url = f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media"
-                payload = {"image_url": img_url, "is_carousel_item": "true", "access_token": PAGE_ACCESS_TOKEN}
-                res = requests.post(media_url, data=payload, timeout=30)
-                if res.status_code == 200:
-                    item_ids.append(res.json().get("id"))
+                res = requests.post(f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media", data={"image_url": img_url, "is_carousel_item": "true", "access_token": PAGE_ACCESS_TOKEN}, timeout=30)
+                if res.status_code == 200: item_ids.append(res.json().get("id"))
                 time.sleep(2)
             if not item_ids: return False
             
-            container_url = f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media"
-            container_payload = {
-                "media_type": "CAROUSEL",
-                "children": ",".join(item_ids),
-                "caption": caption,
-                "access_token": PAGE_ACCESS_TOKEN
-            }
-            res_container = requests.post(container_url, data=container_payload, timeout=30)
-            if res_container.status_code != 200:
-                print(f"  [-] إنستجرام رفض الألبوم. السبب: {res_container.text}")
-                return False
-                
+            res_container = requests.post(f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media", data={"media_type": "CAROUSEL", "children": ",".join(item_ids), "caption": caption, "access_token": PAGE_ACCESS_TOKEN}, timeout=30)
+            if res_container.status_code != 200: return False
             creation_id = res_container.json().get("id")
             time.sleep(15)
             
-        publish_url = f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media_publish"
-        publish_payload = {"creation_id": creation_id, "access_token": PAGE_ACCESS_TOKEN}
-        publish_res = requests.post(publish_url, data=publish_payload, timeout=30)
-        if publish_res.status_code == 200:
-            print("  [+] تم النشر على إنستجرام بنجاح.")
-            return True
-        else:
-            print(f"  [-] فشل النشر النهائي على إنستجرام. السبب: {publish_res.text}")
-            return False
-            
-    except Exception as e: 
-        print(f"  [-] خطأ تقني أثناء النشر على إنستجرام: {e}")
-        return False
+        res_pub = requests.post(f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media_publish", data={"creation_id": creation_id, "access_token": PAGE_ACCESS_TOKEN}, timeout=30)
+        return res_pub.status_code == 200
+    except: return False
 
 # ==========================================
 # 5. Core Logic
 # ==========================================
 def run():
     posted_urls = get_posted_urls()
-    print(f"[*] تم تحميل {len(posted_urls)} روابط مسجلة مسبقاً.")
+    print(f"[*] تم تحميل {len(posted_urls)} روابط مسجلة.")
     
     now_egypt = datetime.utcnow() + timedelta(hours=3)
     arabic_months = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"]
@@ -162,35 +127,41 @@ def run():
             if res.status_code != 200: continue
             
             soup = BeautifulSoup(res.text, "html.parser")
-            links = soup.find_all("a", href=True)
-            
-            for link in links:
+            for link in soup.find_all("a", href=True):
                 href = link["href"]
                 if "/News/Details/" in href or "/Announcements/Details/" in href:
                     full_url = href if href.startswith("http") else f"https://www.fayoum.edu.eg{href}"
-                    
-                    if full_url in posted_urls:
-                        continue
+                    if full_url in posted_urls: continue
                     
                     article_res = session.get(full_url, timeout=30)
                     if article_res.status_code == 200:
-                        article_html = article_res.text
-                        article_soup = BeautifulSoup(article_html, "html.parser")
+                        article_soup = BeautifulSoup(article_res.text, "html.parser")
+                        
+                        # 1. التحقق من التاريخ أولاً
                         page_text = article_soup.get_text(separator=" ", strip=True)
-                        
-                        is_today = any(fmt in page_text for fmt in today_formats)
-                        
-                        if not is_today:
+                        if not any(fmt in page_text for fmt in today_formats):
                             save_posted_url(full_url)
                             posted_urls.add(full_url)
                             continue
+
+                        # ==========================================
+                        # الجراحة: إزالة القوائم العلوية والسفلية تماماً
+                        # ==========================================
+                        for unwanted in article_soup.find_all(["header", "footer", "nav", "aside"]):
+                            unwanted.decompose()
                         
+                        # إزالة أي حاوية تحتوي على كلمات تدل على القوائم أو اللغات
+                        for tag in article_soup.find_all(True):
+                            classes = tag.get("class", [])
+                            if classes and any(any(w in c.lower() for w in ["header", "footer", "nav", "menu", "social", "lang", "topbar"]) for c in classes):
+                                tag.decompose()
+                        # ==========================================
+
                         article_title = ""
                         h_tag = article_soup.find(["h1", "h2", "h3"])
                         if h_tag: article_title = h_tag.get_text(strip=True)
                         if not article_title: article_title = link.get_text(strip=True).replace("اقرأ المزيد", "").strip()
 
-                        # فلترة النصوص لاستبعاد ذيل الصفحة
                         details_list = []
                         ignore_texts = ["جميع الحقوق محفوظة", "إجمالي الزوار", "الزوار الآن", "تصميم وتطوير"]
                         for p in article_soup.find_all("p"):
@@ -202,26 +173,18 @@ def run():
                         if len(article_details) > 1500:
                             article_details = article_details[:1500] + " ... (اقرأ المزيد على الموقع)"
 
-                        # فلترة الصور القوية لاستبعاد اللغات والأيقونات
+                        # استخراج الصور بعد تنظيف الصفحة
                         raw_image_urls = []
-                        excluded_img_words = [
-                            "logo", "icon", "flag", "header", "footer", "banner", 
-                            "egypt", "ministry", "top", "bg", "lang", "arabic", 
-                            "english", "ar.", "en.", "us.", "uk.", "translate", 
-                            "social", "facebook", "twitter", "youtube", "home", 
-                            "search", "menu", "layout", "mail", "print", "pdf", 
-                            "whatsapp", "linkedin", "avatar", "ar.png", "en.png"
-                        ]
+                        excluded_words = ["logo", "icon", "flag", "banner", "egypt", "ar.", "en.", "eg.", "uk.", "bg", "avatar"]
                         for img in article_soup.find_all("img"):
                             src = img.get("src", "").strip()
                             if not src or src == "/" or src.startswith("data:"): continue
                             
-                            # تخطي الصورة لو اسمها بيحتوي على أي كلمة مستبعدة
-                            if not any(word in src.lower() for word in excluded_img_words):
+                            # التأكد الإضافي من اسم الصورة
+                            if not any(w in src.lower() for w in excluded_words):
                                 if src.startswith("http"): full_src = src
-                                else:
-                                    if not src.startswith("/"): src = "/" + src
-                                    full_src = f"https://www.fayoum.edu.eg{src}"
+                                else: full_src = f"https://www.fayoum.edu.eg{src if src.startswith('/') else '/' + src}"
+                                
                                 if full_src not in raw_image_urls: raw_image_urls.append(full_src)
                             if len(raw_image_urls) == 10: break
                         
@@ -240,12 +203,12 @@ def run():
                         if fb_status or ig_status:
                             save_posted_url(full_url)
                             posted_urls.add(full_url)
-                            print("  -> [تم الحفظ] تم تسجيل الخبر في الملف لمنع التكرار.")
+                            print(f"  -> تم نشر وتسجيل: {full_url}")
                         
                         time.sleep(2)
                         
         except Exception as e: 
-            print(f"[!] حدث خطأ أثناء المعالجة: {e}")
+            print(f"[!] خطأ: {e}")
 
 if __name__ == "__main__":
     run()
