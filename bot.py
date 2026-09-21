@@ -75,7 +75,10 @@ def publish_to_facebook(message, link_url):
         url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
         payload = {"message": message, "link": link_url, "access_token": PAGE_ACCESS_TOKEN}
         res = requests.post(url, data=payload, timeout=30)
-        return res.status_code == 200
+        if res.status_code == 200:
+            print("  [+] تم النشر على فيسبوك بنجاح.")
+            return True
+        return False
     except: return False
 
 def publish_to_instagram(image_urls, caption):
@@ -101,7 +104,10 @@ def publish_to_instagram(image_urls, caption):
             time.sleep(15)
             
         res_pub = requests.post(f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media_publish", data={"creation_id": creation_id, "access_token": PAGE_ACCESS_TOKEN}, timeout=30)
-        return res_pub.status_code == 200
+        if res_pub.status_code == 200:
+            print("  [+] تم النشر على إنستجرام بنجاح.")
+            return True
+        return False
     except: return False
 
 # ==========================================
@@ -137,7 +143,6 @@ def run():
                     if article_res.status_code == 200:
                         article_soup = BeautifulSoup(article_res.text, "html.parser")
                         
-                        # 1. التحقق من التاريخ أولاً
                         page_text = article_soup.get_text(separator=" ", strip=True)
                         if not any(fmt in page_text for fmt in today_formats):
                             save_posted_url(full_url)
@@ -145,14 +150,20 @@ def run():
                             continue
 
                         # ==========================================
-                        # الجراحة: إزالة القوائم العلوية والسفلية تماماً
+                        # الجراحة مع سطر الحماية من أخطاء الحذف
                         # ==========================================
                         for unwanted in article_soup.find_all(["header", "footer", "nav", "aside"]):
                             unwanted.decompose()
                         
-                        # إزالة أي حاوية تحتوي على كلمات تدل على القوائم أو اللغات
                         for tag in article_soup.find_all(True):
+                            # سطر الحماية: لو العنصر اتحذف مع أبوه، تجاهله وكمل من غير خطأ
+                            if getattr(tag, 'attrs', None) is None:
+                                continue
+                                
                             classes = tag.get("class", [])
+                            if isinstance(classes, str): 
+                                classes = [classes]
+                                
                             if classes and any(any(w in c.lower() for w in ["header", "footer", "nav", "menu", "social", "lang", "topbar"]) for c in classes):
                                 tag.decompose()
                         # ==========================================
@@ -173,14 +184,15 @@ def run():
                         if len(article_details) > 1500:
                             article_details = article_details[:1500] + " ... (اقرأ المزيد على الموقع)"
 
-                        # استخراج الصور بعد تنظيف الصفحة
                         raw_image_urls = []
                         excluded_words = ["logo", "icon", "flag", "banner", "egypt", "ar.", "en.", "eg.", "uk.", "bg", "avatar"]
                         for img in article_soup.find_all("img"):
+                            # حماية إضافية للصور
+                            if getattr(img, 'attrs', None) is None: continue 
+                            
                             src = img.get("src", "").strip()
                             if not src or src == "/" or src.startswith("data:"): continue
                             
-                            # التأكد الإضافي من اسم الصورة
                             if not any(w in src.lower() for w in excluded_words):
                                 if src.startswith("http"): full_src = src
                                 else: full_src = f"https://www.fayoum.edu.eg{src if src.startswith('/') else '/' + src}"
