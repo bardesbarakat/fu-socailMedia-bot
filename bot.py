@@ -202,9 +202,16 @@ def run():
                         if len(article_details) > 1500:
                             article_details = article_details[:1500] + " ... (اقرأ المزيد على الموقع)"
 
-                        # فلترة الصور لاستبعاد العلم والشعار
+                        # فلترة الصور القوية لاستبعاد اللغات والأيقونات
                         raw_image_urls = []
-                        excluded_img_words = ["logo", "icon", "flag", "header", "footer", "banner", "egypt", "ministry", "top", "bg"]
+                        excluded_img_words = [
+                            "logo", "icon", "flag", "header", "footer", "banner", 
+                            "egypt", "ministry", "top", "bg", "lang", "arabic", 
+                            "english", "ar.", "en.", "us.", "uk.", "translate", 
+                            "social", "facebook", "twitter", "youtube", "home", 
+                            "search", "menu", "layout", "mail", "print", "pdf", 
+                            "whatsapp", "linkedin", "avatar", "ar.png", "en.png"
+                        ]
                         for img in article_soup.find_all("img"):
                             src = img.get("src", "").strip()
                             if not src or src == "/" or src.startswith("data:"): continue
