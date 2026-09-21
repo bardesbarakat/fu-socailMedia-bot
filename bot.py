@@ -15,7 +15,6 @@ PAGE_ACCESS_TOKEN = os.getenv("PAGE_ACCESS_TOKEN")
 PAGE_ID = os.getenv("PAGE_ID")
 IG_USER_ID = os.getenv("IG_USER_ID")
 
-# إعدادات Cloudinary
 cloudinary.config(
   cloud_name = os.getenv('CLOUDINARY_CLOUD_NAME'),
   api_key = os.getenv('CLOUDINARY_API_KEY'),
@@ -72,7 +71,6 @@ def process_and_upload_image(image_url):
 # ==========================================
 def publish_to_facebook(message, link_url):
     if not PAGE_ACCESS_TOKEN or not PAGE_ID:
-        print("[-] خطأ: بيانات فيسبوك (Token أو ID) غير موجودة في الـ Secrets!")
         return False
     try:
         url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
@@ -159,7 +157,6 @@ def run():
     ]
 
     for source_url in SOURCES:
-        print(f"\n[*] جاري فحص الرابط: {source_url}")
         try:
             res = session.get(source_url, timeout=30)
             if res.status_code != 200: continue
@@ -175,7 +172,6 @@ def run():
                     if full_url in posted_urls:
                         continue
                     
-                    print(f"\n- خبر جديد: {full_url}")
                     article_res = session.get(full_url, timeout=30)
                     if article_res.status_code == 200:
                         article_html = article_res.text
@@ -189,27 +185,32 @@ def run():
                             posted_urls.add(full_url)
                             continue
                         
-                        print("  -> التاريخ متطابق. جاري تجهيز المنشور...")
-                        
                         article_title = ""
                         h_tag = article_soup.find(["h1", "h2", "h3"])
                         if h_tag: article_title = h_tag.get_text(strip=True)
                         if not article_title: article_title = link.get_text(strip=True).replace("اقرأ المزيد", "").strip()
 
+                        # فلترة النصوص لاستبعاد ذيل الصفحة
                         details_list = []
+                        ignore_texts = ["جميع الحقوق محفوظة", "إجمالي الزوار", "الزوار الآن", "تصميم وتطوير"]
                         for p in article_soup.find_all("p"):
                             p_text = p.get_text(strip=True)
-                            if len(p_text) > 30: details_list.append(p_text)
+                            if len(p_text) > 30 and not any(txt in p_text for txt in ignore_texts):
+                                details_list.append(p_text)
                         
                         article_details = "\n\n".join(details_list)
                         if len(article_details) > 1500:
                             article_details = article_details[:1500] + " ... (اقرأ المزيد على الموقع)"
 
+                        # فلترة الصور لاستبعاد العلم والشعار
                         raw_image_urls = []
+                        excluded_img_words = ["logo", "icon", "flag", "header", "footer", "banner", "egypt", "ministry", "top", "bg"]
                         for img in article_soup.find_all("img"):
                             src = img.get("src", "").strip()
                             if not src or src == "/" or src.startswith("data:"): continue
-                            if "logo" not in src.lower() and "icon" not in src.lower():
+                            
+                            # تخطي الصورة لو اسمها بيحتوي على أي كلمة مستبعدة
+                            if not any(word in src.lower() for word in excluded_img_words):
                                 if src.startswith("http"): full_src = src
                                 else:
                                     if not src.startswith("/"): src = "/" + src
@@ -233,8 +234,6 @@ def run():
                             save_posted_url(full_url)
                             posted_urls.add(full_url)
                             print("  -> [تم الحفظ] تم تسجيل الخبر في الملف لمنع التكرار.")
-                        else:
-                            print("  -> [تحذير] لم يتم نشر الخبر بنجاح، ولن يتم تسجيله (سيحاول البوت مرة أخرى لاحقاً).")
                         
                         time.sleep(2)
                         
