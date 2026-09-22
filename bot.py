@@ -16,9 +16,9 @@ PAGE_ID = os.getenv("PAGE_ID")
 IG_USER_ID = os.getenv("IG_USER_ID")
 
 cloudinary.config(
-  cloud_name = os.getenv('CLOUDINARY_CLOUD_NAME'),
-  api_key = os.getenv('CLOUDINARY_API_KEY'),
-  api_secret = os.getenv('CLOUDINARY_API_SECRET')
+    cloud_name = os.getenv('CLOUDINARY_CLOUD_NAME'),
+    api_key = os.getenv('CLOUDINARY_API_KEY'),
+    api_secret = os.getenv('CLOUDINARY_API_SECRET')
 )
 
 SOURCES = [
@@ -82,24 +82,33 @@ def publish_to_facebook(message, link_url):
     except: return False
 
 def publish_to_instagram(image_urls, caption):
-    if not PAGE_ACCESS_TOKEN or not IG_USER_ID or not image_urls: return False
+    if not PAGE_ACCESS_TOKEN or not IG_USER_ID or not image_urls: 
+        print("  [!] تم تخطي انستجرام: البيانات المطلوبة (Tokens) أو الصور مفقودة.")
+        return False
     try:
         if len(image_urls) == 1:
             media_url = f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media"
             res_media = requests.post(media_url, data={"image_url": image_urls[0], "caption": caption, "access_token": PAGE_ACCESS_TOKEN}, timeout=30)
-            if res_media.status_code != 200: return False
+            if res_media.status_code != 200:
+                print(f"  [!] خطأ رفع الصورة لانستجرام (Media): {res_media.json()}")
+                return False
             creation_id = res_media.json().get("id")
             time.sleep(10)
         else:
             item_ids = []
             for img_url in image_urls:
                 res = requests.post(f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media", data={"image_url": img_url, "is_carousel_item": "true", "access_token": PAGE_ACCESS_TOKEN}, timeout=30)
-                if res.status_code == 200: item_ids.append(res.json().get("id"))
+                if res.status_code == 200: 
+                    item_ids.append(res.json().get("id"))
+                else:
+                    print(f"  [!] خطأ في صورة الألبوم (Carousel Item): {res.json()}")
                 time.sleep(2)
             if not item_ids: return False
             
             res_container = requests.post(f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media", data={"media_type": "CAROUSEL", "children": ",".join(item_ids), "caption": caption, "access_token": PAGE_ACCESS_TOKEN}, timeout=30)
-            if res_container.status_code != 200: return False
+            if res_container.status_code != 200: 
+                print(f"  [!] خطأ تجميع الألبوم (Carousel Container): {res_container.json()}")
+                return False
             creation_id = res_container.json().get("id")
             time.sleep(15)
             
@@ -107,8 +116,12 @@ def publish_to_instagram(image_urls, caption):
         if res_pub.status_code == 200:
             print("  [+] تم النشر على إنستجرام بنجاح.")
             return True
+        else:
+            print(f"  [!] خطأ النشر النهائي لانستجرام (Publish): {res_pub.json()}")
+            return False
+    except Exception as e: 
+        print(f"  [!] خطأ برمجي أثناء التعامل مع انستجرام: {e}")
         return False
-    except: return False
 
 # ==========================================
 # 5. Core Logic
@@ -187,7 +200,6 @@ def run():
                         raw_image_urls = []
                         excluded_words = ["logo", "icon", "flag", "banner", "egypt", "ar.", "en.", "eg.", "uk.", "bg", "avatar"]
                         for img in article_soup.find_all("img"):
-                            # حماية إضافية للصور
                             if getattr(img, 'attrs', None) is None: continue 
                             
                             src = img.get("src", "").strip()
@@ -207,7 +219,15 @@ def run():
 
                         ig_caption = f"🔴 {article_title}\n\n{article_details}\n\n🔗 التفاصيل بالكامل عبر الرابط: {full_url}"
                         
-                        fb_status = publish_to_facebook(message="", link_url=full_url)
+                        if not valid_images:
+                            print("  [!] لا توجد صور صالحة، سيتم تخطي انستجرام لهذا الرابط.")
+
+                        # ==========================================
+                        # تم إيقاف النشر على فيسبوك هنا
+                        # ==========================================
+                        # fb_status = publish_to_facebook(message="", link_url=full_url)
+                        fb_status = False 
+                        
                         ig_status = False
                         if valid_images:
                             ig_status = publish_to_instagram(image_urls=valid_images, caption=ig_caption)
@@ -215,7 +235,7 @@ def run():
                         if fb_status or ig_status:
                             save_posted_url(full_url)
                             posted_urls.add(full_url)
-                            print(f"  -> تم نشر وتسجيل: {full_url}")
+                            print(f"  -> تم التسجيل (فيسبوك: {fb_status} | انستجرام: {ig_status}) : {full_url}")
                         
                         time.sleep(2)
                         
