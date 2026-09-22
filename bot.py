@@ -60,10 +60,16 @@ def save_posted_url(url):
 # ==========================================
 def process_and_upload_image(image_url):
     try:
-        response = cloudinary.uploader.upload(image_url)
+        # تعديل أبعاد الصورة لتصبح 1080x1080 (مربعة) مع وضع خلفية مناسبة تلقائياً للملء
+        response = cloudinary.uploader.upload(
+            image_url,
+            transformation=[
+                {'width': 1080, 'height': 1080, 'crop': 'pad', 'background': 'auto'}
+            ]
+        )
         return response.get('secure_url')
     except Exception as e:
-        print(f"[!] خطأ في رفع الصورة: {e}")
+        print(f"[!] خطأ في رفع وتعديل الصورة: {e}")
         return None
 
 # ==========================================
@@ -223,9 +229,8 @@ def run():
                             print("  [!] لا توجد صور صالحة، سيتم تخطي انستجرام لهذا الرابط.")
 
                         # ==========================================
-                        # تم إيقاف النشر على فيسبوك هنا
+                        # النشر على فيسبوك معطل للتركيز على انستجرام فقط
                         # ==========================================
-                        # fb_status = publish_to_facebook(message="", link_url=full_url)
                         fb_status = False 
                         
                         ig_status = False
@@ -235,7 +240,7 @@ def run():
                         if fb_status or ig_status:
                             save_posted_url(full_url)
                             posted_urls.add(full_url)
-                            print(f"  -> تم التسجيل (فيسبوك: {fb_status} | انستجرام: {ig_status}) : {full_url}")
+                            print(f"  -> تم التسجيل بنجاح - انستجرام: {ig_status} : {full_url}")
                         
                         time.sleep(2)
                         
