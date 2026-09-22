@@ -60,9 +60,11 @@ def save_posted_url(url):
 # ==========================================
 def process_and_upload_image(image_url):
     try:
-        # تعديل أبعاد الصورة لتصبح 1080x1080 (مربعة) مع وضع خلفية مناسبة تلقائياً للملء
+        # إضافة format='jpg' لضمان قبول انستجرام للصيغة مهما كان المصدر الأساسي
+        # تعديل أبعاد الصورة لتصبح 1080x1080 (مربعة) مع وضع خلفية مناسبة تلقائياً
         response = cloudinary.uploader.upload(
             image_url,
+            format="jpg",
             transformation=[
                 {'width': 1080, 'height': 1080, 'crop': 'pad', 'background': 'auto'}
             ]
