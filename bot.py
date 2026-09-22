@@ -231,9 +231,9 @@ def run():
                             print("  [!] لا توجد صور صالحة، سيتم تخطي انستجرام لهذا الرابط.")
 
                         # ==========================================
-                        # النشر على فيسبوك معطل للتركيز على انستجرام فقط
+                        # النشر على المنصتين معاً (فيسبوك وإنستجرام)
                         # ==========================================
-                        fb_status = False 
+                        fb_status = publish_to_facebook(message="", link_url=full_url)
                         
                         ig_status = False
                         if valid_images:
@@ -242,7 +242,7 @@ def run():
                         if fb_status or ig_status:
                             save_posted_url(full_url)
                             posted_urls.add(full_url)
-                            print(f"  -> تم التسجيل بنجاح - انستجرام: {ig_status} : {full_url}")
+                            print(f"  -> تم التسجيل بنجاح (فيسبوك: {fb_status} | انستجرام: {ig_status}) : {full_url}")
                         
                         time.sleep(2)
                         
