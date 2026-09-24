@@ -60,8 +60,7 @@ def save_posted_url(url):
 # ==========================================
 def process_and_upload_image(image_url):
     try:
-        # إضافة format='jpg' لضمان قبول انستجرام للصيغة مهما كان المصدر الأساسي
-        # تعديل أبعاد الصورة لتصبح 1080x1080 (مربعة) مع وضع خلفية مناسبة تلقائياً
+        # إضافة format='jpg' لضمان قبول انستجرام وتعديل الأبعاد
         response = cloudinary.uploader.upload(
             image_url,
             format="jpg",
@@ -111,14 +110,23 @@ def publish_to_instagram(image_urls, caption):
                 else:
                     print(f"  [!] خطأ في صورة الألبوم (Carousel Item): {res.json()}")
                 time.sleep(2)
+            
             if not item_ids: return False
             
-            res_container = requests.post(f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media", data={"media_type": "CAROUSEL", "children": ",".join(item_ids), "caption": caption, "access_token": PAGE_ACCESS_TOKEN}, timeout=30)
-            if res_container.status_code != 200: 
-                print(f"  [!] خطأ تجميع الألبوم (Carousel Container): {res_container.json()}")
-                return False
-            creation_id = res_container.json().get("id")
-            time.sleep(15)
+            # الخطة البديلة: لو نجحت صورة واحدة فقط، انشرها كصورة مفردة بدلاً من ألبوم
+            if len(item_ids) == 1:
+                media_url = f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media"
+                res_media = requests.post(media_url, data={"image_url": image_urls[0], "caption": caption, "access_token": PAGE_ACCESS_TOKEN}, timeout=30)
+                if res_media.status_code != 200: return False
+                creation_id = res_media.json().get("id")
+                time.sleep(10)
+            else:
+                res_container = requests.post(f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media", data={"media_type": "CAROUSEL", "children": ",".join(item_ids), "caption": caption, "access_token": PAGE_ACCESS_TOKEN}, timeout=30)
+                if res_container.status_code != 200: 
+                    print(f"  [!] خطأ تجميع الألبوم (Carousel Container): {res_container.json()}")
+                    return False
+                creation_id = res_container.json().get("id")
+                time.sleep(15)
             
         res_pub = requests.post(f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media_publish", data={"creation_id": creation_id, "access_token": PAGE_ACCESS_TOKEN}, timeout=30)
         if res_pub.status_code == 200:
@@ -177,7 +185,6 @@ def run():
                             unwanted.decompose()
                         
                         for tag in article_soup.find_all(True):
-                            # سطر الحماية: لو العنصر اتحذف مع أبوه، تجاهله وكمل من غير خطأ
                             if getattr(tag, 'attrs', None) is None:
                                 continue
                                 
