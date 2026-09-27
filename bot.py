@@ -64,14 +64,12 @@ def save_posted_url(url):
 # ==========================================
 def process_and_upload_image(image_url):
     try:
-        # التخفي كأننا متصفح يزور موقع الجامعة
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Referer": "https://www.fayoum.edu.eg/",
             "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
         }
         
-        # تحميل الصورة مع إغلاق فحص الأمان (verify=False) لتخطي حظر السيرفر المصري
         img_res = session.get(image_url, headers=headers, timeout=30, verify=False)
         
         if img_res.status_code != 200:
@@ -93,17 +91,33 @@ def process_and_upload_image(image_url):
 # ==========================================
 # 4. Publishing Functions
 # ==========================================
-def publish_to_facebook(message, link_url):
+def publish_to_facebook(message, link_url, image_urls):
     if not PAGE_ACCESS_TOKEN or not PAGE_ID: return False
     try:
-        url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
-        payload = {"message": message, "link": link_url, "access_token": PAGE_ACCESS_TOKEN}
+        if image_urls and len(image_urls) > 0:
+            # النشر كـ "صورة" لإجبار فيسبوك على عرض صورة الخبر وليس اللوجو
+            url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/photos"
+            full_message = f"{message}\n\n🔗 لقراءة التفاصيل كاملة عبر الموقع:\n{link_url}"
+            payload = {
+                "url": image_urls[0],
+                "message": full_message,
+                "access_token": PAGE_ACCESS_TOKEN
+            }
+        else:
+            # في حال عدم وجود صور، يتم النشر كرابط عادي
+            url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
+            payload = {"message": message, "link": link_url, "access_token": PAGE_ACCESS_TOKEN}
+            
         res = requests.post(url, data=payload, timeout=30)
         if res.status_code == 200:
             print("  [+] تم النشر على فيسبوك بنجاح.")
             return True
+        else:
+            print(f"  [!] خطأ النشر على فيسبوك: {res.json()}")
+            return False
+    except Exception as e: 
+        print(f"  [!] خطأ برمجي في فيسبوك: {e}")
         return False
-    except: return False
 
 def publish_to_instagram(image_urls, caption):
     if not PAGE_ACCESS_TOKEN or not IG_USER_ID or not image_urls: 
@@ -238,12 +252,13 @@ def run():
                             processed_url = process_and_upload_image(img_url)
                             if processed_url: valid_images.append(processed_url)
 
+                        fb_caption = f"🔴 {article_title}\n\n{article_details}"
                         ig_caption = f"🔴 {article_title}\n\n{article_details}\n\n🔗 التفاصيل بالكامل عبر الرابط: {full_url}"
                         
                         if not valid_images:
                             print("  [!] لا توجد صور صالحة، سيتم تخطي انستجرام لهذا الرابط.")
 
-                        fb_status = publish_to_facebook(message="", link_url=full_url)
+                        fb_status = publish_to_facebook(message=fb_caption, link_url=full_url, image_urls=valid_images)
                         
                         ig_status = False
                         if valid_images:
