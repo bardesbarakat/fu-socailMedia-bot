@@ -91,26 +91,16 @@ def process_and_upload_image(image_url):
 # ==========================================
 # 4. Publishing Functions
 # ==========================================
-def publish_to_facebook(message, link_url, image_urls):
+def publish_to_facebook(message, link_url):
     if not PAGE_ACCESS_TOKEN or not PAGE_ID: return False
     try:
-        if image_urls and len(image_urls) > 0:
-            # النشر كـ "صورة" لإجبار فيسبوك على عرض صورة الخبر وليس اللوجو
-            url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/photos"
-            full_message = f"{message}\n\n🔗 لقراءة التفاصيل كاملة عبر الموقع:\n{link_url}"
-            payload = {
-                "url": image_urls[0],
-                "message": full_message,
-                "access_token": PAGE_ACCESS_TOKEN
-            }
-        else:
-            # في حال عدم وجود صور، يتم النشر كرابط عادي
-            url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
-            payload = {"message": message, "link": link_url, "access_token": PAGE_ACCESS_TOKEN}
+        # النشر كـ (Link Post) لتوليد كارت المعاينة التلقائي
+        url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
+        payload = {"message": message, "link": link_url, "access_token": PAGE_ACCESS_TOKEN}
             
         res = requests.post(url, data=payload, timeout=30)
         if res.status_code == 200:
-            print("  [+] تم النشر على فيسبوك بنجاح.")
+            print("  [+] تم النشر على فيسبوك بنجاح (Link Preview).")
             return True
         else:
             print(f"  [!] خطأ النشر على فيسبوك: {res.json()}")
@@ -258,7 +248,7 @@ def run():
                         if not valid_images:
                             print("  [!] لا توجد صور صالحة، سيتم تخطي انستجرام لهذا الرابط.")
 
-                        fb_status = publish_to_facebook(message=fb_caption, link_url=full_url, image_urls=valid_images)
+                        fb_status = publish_to_facebook(message=fb_caption, link_url=full_url)
                         
                         ig_status = False
                         if valid_images:
