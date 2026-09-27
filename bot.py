@@ -60,9 +60,15 @@ def save_posted_url(url):
 # ==========================================
 def process_and_upload_image(image_url):
     try:
-        # إضافة format='jpg' لضمان قبول انستجرام وتعديل الأبعاد
+        # الخطوة 1: البوت يحمل الصورة بنفسه الأول عشان يتفادى حظر وبطء سيرفر الجامعة
+        img_res = session.get(image_url, timeout=30)
+        if img_res.status_code != 200:
+            print(f"  [!] فشل تحميل الصورة من سيرفر الجامعة: {image_url}")
+            return None
+            
+        # الخطوة 2: رفع "محتوى الملف" لـ Cloudinary مع تظبيط الأبعاد وصيغة jpg
         response = cloudinary.uploader.upload(
-            image_url,
+            img_res.content,
             format="jpg",
             transformation=[
                 {'width': 1080, 'height': 1080, 'crop': 'pad', 'background': 'auto'}
@@ -70,7 +76,7 @@ def process_and_upload_image(image_url):
         )
         return response.get('secure_url')
     except Exception as e:
-        print(f"[!] خطأ في رفع وتعديل الصورة: {e}")
+        print(f"  [!] خطأ في رفع وتعديل الصورة: {e}")
         return None
 
 # ==========================================
