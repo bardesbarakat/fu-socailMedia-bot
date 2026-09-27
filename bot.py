@@ -7,6 +7,10 @@ from urllib3.util import Retry
 from requests.adapters import HTTPAdapter
 import cloudinary
 import cloudinary.uploader
+import urllib3
+
+# إيقاف تحذيرات شهادات الأمان الخاصة بسيرفر الجامعة
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ==========================================
 # 1. Variables & Config
@@ -60,13 +64,20 @@ def save_posted_url(url):
 # ==========================================
 def process_and_upload_image(image_url):
     try:
-        # الخطوة 1: البوت يحمل الصورة بنفسه الأول عشان يتفادى حظر وبطء سيرفر الجامعة
-        img_res = session.get(image_url, timeout=30)
+        # التخفي كأننا متصفح يزور موقع الجامعة
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "Referer": "https://www.fayoum.edu.eg/",
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
+        }
+        
+        # تحميل الصورة مع إغلاق فحص الأمان (verify=False) لتخطي حظر السيرفر المصري
+        img_res = session.get(image_url, headers=headers, timeout=30, verify=False)
+        
         if img_res.status_code != 200:
-            print(f"  [!] فشل تحميل الصورة من سيرفر الجامعة: {image_url}")
+            print(f"  [!] فشل تحميل الصورة من سيرفر الجامعة (Code: {img_res.status_code})")
             return None
             
-        # الخطوة 2: رفع "محتوى الملف" لـ Cloudinary مع تظبيط الأبعاد وصيغة jpg
         response = cloudinary.uploader.upload(
             img_res.content,
             format="jpg",
@@ -76,7 +87,7 @@ def process_and_upload_image(image_url):
         )
         return response.get('secure_url')
     except Exception as e:
-        print(f"  [!] خطأ في رفع وتعديل الصورة: {e}")
+        print(f"  [!] خطأ في تحميل أو رفع الصورة: {e}")
         return None
 
 # ==========================================
@@ -119,7 +130,6 @@ def publish_to_instagram(image_urls, caption):
             
             if not item_ids: return False
             
-            # الخطة البديلة: لو نجحت صورة واحدة فقط، انشرها كصورة مفردة بدلاً من ألبوم
             if len(item_ids) == 1:
                 media_url = f"https://graph.facebook.com/v18.0/{IG_USER_ID}/media"
                 res_media = requests.post(media_url, data={"image_url": image_urls[0], "caption": caption, "access_token": PAGE_ACCESS_TOKEN}, timeout=30)
@@ -164,7 +174,7 @@ def run():
 
     for source_url in SOURCES:
         try:
-            res = session.get(source_url, timeout=30)
+            res = session.get(source_url, timeout=30, verify=False)
             if res.status_code != 200: continue
             
             soup = BeautifulSoup(res.text, "html.parser")
@@ -174,7 +184,7 @@ def run():
                     full_url = href if href.startswith("http") else f"https://www.fayoum.edu.eg{href}"
                     if full_url in posted_urls: continue
                     
-                    article_res = session.get(full_url, timeout=30)
+                    article_res = session.get(full_url, timeout=30, verify=False)
                     if article_res.status_code == 200:
                         article_soup = BeautifulSoup(article_res.text, "html.parser")
                         
@@ -184,23 +194,15 @@ def run():
                             posted_urls.add(full_url)
                             continue
 
-                        # ==========================================
-                        # الجراحة مع سطر الحماية من أخطاء الحذف
-                        # ==========================================
                         for unwanted in article_soup.find_all(["header", "footer", "nav", "aside"]):
                             unwanted.decompose()
                         
                         for tag in article_soup.find_all(True):
-                            if getattr(tag, 'attrs', None) is None:
-                                continue
-                                
+                            if getattr(tag, 'attrs', None) is None: continue
                             classes = tag.get("class", [])
-                            if isinstance(classes, str): 
-                                classes = [classes]
-                                
+                            if isinstance(classes, str): classes = [classes]
                             if classes and any(any(w in c.lower() for w in ["header", "footer", "nav", "menu", "social", "lang", "topbar"]) for c in classes):
                                 tag.decompose()
-                        # ==========================================
 
                         article_title = ""
                         h_tag = article_soup.find(["h1", "h2", "h3"])
@@ -222,14 +224,12 @@ def run():
                         excluded_words = ["logo", "icon", "flag", "banner", "egypt", "ar.", "en.", "eg.", "uk.", "bg", "avatar"]
                         for img in article_soup.find_all("img"):
                             if getattr(img, 'attrs', None) is None: continue 
-                            
                             src = img.get("src", "").strip()
                             if not src or src == "/" or src.startswith("data:"): continue
                             
                             if not any(w in src.lower() for w in excluded_words):
                                 if src.startswith("http"): full_src = src
                                 else: full_src = f"https://www.fayoum.edu.eg{src if src.startswith('/') else '/' + src}"
-                                
                                 if full_src not in raw_image_urls: raw_image_urls.append(full_src)
                             if len(raw_image_urls) == 10: break
                         
@@ -243,9 +243,6 @@ def run():
                         if not valid_images:
                             print("  [!] لا توجد صور صالحة، سيتم تخطي انستجرام لهذا الرابط.")
 
-                        # ==========================================
-                        # النشر على المنصتين معاً (فيسبوك وإنستجرام)
-                        # ==========================================
                         fb_status = publish_to_facebook(message="", link_url=full_url)
                         
                         ig_status = False
