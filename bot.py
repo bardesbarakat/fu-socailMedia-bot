@@ -91,16 +91,26 @@ def process_and_upload_image(image_url):
 # ==========================================
 # 4. Publishing Functions
 # ==========================================
-def publish_to_facebook(message, link_url):
+def publish_to_facebook(message, link_url, image_urls):
     if not PAGE_ACCESS_TOKEN or not PAGE_ID: return False
     try:
-        # النشر كـ (Link Post) لتوليد كارت المعاينة التلقائي
-        url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
-        payload = {"message": message, "link": link_url, "access_token": PAGE_ACCESS_TOKEN}
+        if image_urls and len(image_urls) > 0:
+            # النشر كصورة صريحة لتجنب اللوجو الافتراضي
+            url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/photos"
+            full_message = f"{message}\n\n🔗 لقراءة التفاصيل كاملة عبر الموقع:\n{link_url}"
+            payload = {
+                "url": image_urls[0],
+                "message": full_message,
+                "access_token": PAGE_ACCESS_TOKEN
+            }
+        else:
+            # النشر كرابط في حال عدم وجود صور نهائياً
+            url = f"https://graph.facebook.com/v18.0/{PAGE_ID}/feed"
+            payload = {"message": message, "link": link_url, "access_token": PAGE_ACCESS_TOKEN}
             
         res = requests.post(url, data=payload, timeout=30)
         if res.status_code == 200:
-            print("  [+] تم النشر على فيسبوك بنجاح (Link Preview).")
+            print("  [+] تم النشر على فيسبوك بنجاح (Photo Post).")
             return True
         else:
             print(f"  [!] خطأ النشر على فيسبوك: {res.json()}")
@@ -248,7 +258,7 @@ def run():
                         if not valid_images:
                             print("  [!] لا توجد صور صالحة، سيتم تخطي انستجرام لهذا الرابط.")
 
-                        fb_status = publish_to_facebook(message=fb_caption, link_url=full_url)
+                        fb_status = publish_to_facebook(message=fb_caption, link_url=full_url, image_urls=valid_images)
                         
                         ig_status = False
                         if valid_images:
