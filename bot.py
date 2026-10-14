@@ -110,7 +110,7 @@ def publish_to_facebook(message, link_url, image_urls):
             
         res = requests.post(url, data=payload, timeout=30)
         if res.status_code == 200:
-            print("  [+] تم النشر على فيسبوك بنجاح (Photo Post).")
+            print("  [+] تم النشر على فيسبوك بنجاح.")
             return True
         else:
             print(f"  [!] خطأ النشر على فيسبوك: {res.json()}")
@@ -186,6 +186,9 @@ def run():
         f"{now_egypt.day} {month_ar} {now_egypt.year}", f"{now_egypt.day:02d} {month_ar} {now_egypt.year}"
     ]
 
+    # مسارات التفاصيل المختلفة (أخبار - إعلانات - فعاليات)
+    valid_paths = ["/News/Details/", "/Announcements/Details/", "/Events/Details/"]
+
     for source_url in SOURCES:
         try:
             res = session.get(source_url, timeout=30, verify=False)
@@ -194,7 +197,9 @@ def run():
             soup = BeautifulSoup(res.text, "html.parser")
             for link in soup.find_all("a", href=True):
                 href = link["href"]
-                if "/News/Details/" in href or "/Announcements/Details/" in href:
+                
+                # التحقق من وجود أي مسار من المسارات الثلاثة
+                if any(path in href for path in valid_paths):
                     full_url = href if href.startswith("http") else f"https://www.fayoum.edu.eg{href}"
                     if full_url in posted_urls: continue
                     
@@ -202,8 +207,11 @@ def run():
                     if article_res.status_code == 200:
                         article_soup = BeautifulSoup(article_res.text, "html.parser")
                         
+                        # إلغاء شرط التاريخ للإعلانات والفعاليات لتجنب تخطيها
+                        is_news = "/News/Details/" in full_url
                         page_text = article_soup.get_text(separator=" ", strip=True)
-                        if not any(fmt in page_text for fmt in today_formats):
+                        
+                        if is_news and not any(fmt in page_text for fmt in today_formats):
                             save_posted_url(full_url)
                             posted_urls.add(full_url)
                             continue
