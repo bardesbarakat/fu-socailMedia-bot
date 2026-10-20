@@ -1,4 +1,4 @@
-# Fayoum University Social Media Automation Bot 🤖
+# Fayoum University Website Social Media Automation Bot 
 
 An advanced, automated Python-based pipeline that scrapes official news, announcements, and events from Fayoum University's portal (`fayoum.edu.eg`) and seamlessly cross-posts them to social media platforms (Facebook & Instagram).
 
